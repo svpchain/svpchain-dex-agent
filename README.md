@@ -82,6 +82,36 @@ go run ./cmd/svpchain-dex-agent --indexer-url https://indexer.example.com --list
 
 `/healthz` answers load-balancer liveness checks.
 
+## Deployment
+
+`scripts/dex-agent-deploy.sh` installs the agent onto a remote SSH host as a
+docker container, mirroring svpchain-mcp's deploy script: build (vendored, so
+the `../svpagent/protocol` replace never leaves the operator) → `docker save`
+(cached by image id) → rsync `agent.toml` + compose file (+ `operator.key`
+when given, mode 600) → `docker load` → `docker compose up -d` → smoke test
+(`/healthz` + agent card over loopback via ssh).
+
+```sh
+# Keyless (execution advertised but refused)
+./scripts/dex-agent-deploy.sh --host www@svpdev1.example.com
+
+# With delegated execution enabled
+./scripts/dex-agent-deploy.sh --host www@svpdev1.example.com \
+  --operator-key-file ./operator.key \
+  --public-url https://dex-agent.svpchain.org
+
+# Inspect / tear down
+./scripts/dex-agent-deploy.sh --print-config --host …
+./scripts/dex-agent-deploy.sh --dry-run --host … 
+./scripts/dex-agent-deploy.sh --uninstall --host …
+```
+
+The remote needs only docker + the compose v2 plugin reachable by the ssh
+user without sudo. Run `--help` for the full flag list (chain endpoints, EVM
+family, faucet, limits, bridge routes — same knobs and defaults as the MCP
+deploy). A config-schema test (`internal/config/deploy_script_test.go`) pins
+the script's rendered `agent.toml` to what `internal/config` actually parses.
+
 ## Development
 
 Dependencies with sharp edges:

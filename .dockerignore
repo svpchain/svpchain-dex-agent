@@ -1,0 +1,7 @@
+# Keep the build context lean. NOTE: vendor/ is intentionally NOT ignored —
+# the image builds with -mod=vendor and needs it (see cmd/svpchain-dex-agent/Dockerfile).
+.git
+/build
+agent.toml
+operator.key
+**/.DS_Store
