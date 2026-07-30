@@ -584,7 +584,8 @@ step "On operator → remote: rsync config + image tar to $install_dir"
 toml_tmp="$(mktemp -t svpchain-dex-agent.toml.XXXXXX)"
 compose_tmp="$(mktemp -t svpchain-dex-agent.compose.XXXXXX)"
 routes_tmp=""
-trap 'rm -f "$toml_tmp" "$compose_tmp" "$routes_tmp"' EXIT
+key_tmp=""
+trap 'rm -f "$toml_tmp" "$compose_tmp" "$routes_tmp" "$key_tmp"' EXIT
 render_agent_toml > "$toml_tmp"
 render_compose_yaml > "$compose_tmp"
 bridge_routes_ship=""
@@ -601,10 +602,14 @@ remote_exec "mkdir -p $install_dir $install_dir/data"
 run_or_print "rsync -avz '$toml_tmp' '$host:$install_dir/agent.toml'"
 [[ -n "$bridge_routes_ship" ]] && \
   run_or_print "rsync -avz '$bridge_routes_ship' '$host:$install_dir/$bridge_routes_basename'"
-# The operator key is a secret: ship with tight perms and pin them remotely
-# (rsync --chmod covers the transfer; the chmod covers a pre-existing file).
+# The operator key is a secret: ship a 0600 temp copy — rsync -a preserves
+# permissions, which is portable where --chmod=F600 is not (macOS's bundled
+# openrsync rejects the octal form) — and pin them remotely as belt-and-braces
+# for a pre-existing file.
 if [[ -n "$operator_key_src_abs" ]]; then
-  run_or_print "rsync -avz --chmod=F600 '$operator_key_src_abs' '$host:$install_dir/operator.key'"
+  key_tmp="$(mktemp -t svpchain-dex-agent.key.XXXXXX)"
+  run_or_print "cp '$operator_key_src_abs' '$key_tmp' && chmod 600 '$key_tmp'"
+  run_or_print "rsync -avz '$key_tmp' '$host:$install_dir/operator.key'"
   remote_exec "chmod 600 $install_dir/operator.key"
 fi
 run_or_print "rsync -avz '$compose_tmp' '$host:$install_dir/docker-compose.yml'"
