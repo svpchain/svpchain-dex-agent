@@ -1,55 +1,102 @@
 # svpchain-dex-agent
 
-The read layer of an SVP-Chain perpetuals DEX agent: an [A2A](https://a2aproject.github.io/A2A/)
-service that answers market-data questions from the public indexer.
+An [A2A](https://a2aproject.github.io/A2A/) agent for the SVP-Chain perpetuals
+DEX. Its skills cover the full svpchain-mcp tool surface — market data,
+accounts, unsigned tx building, broadcast, self-service auth, faucet, EVM
+(swap/bridge/ERC), Lendora — plus the chain's `x/agent` / `x/agentwallet`
+modules and **live delegated execution** under
+[SVP-DT](https://github.com/svpchain/svpdt) credentials.
 
-It is a **thin shell** by design. It holds no keys, opens no chain connection,
-and depends on no on-chain delegation module — so it can be deployed, and billed
-per call over x402, before any execution or delegation machinery exists.
+## Skills
 
-## Two skills
+The Agent Card (`/.well-known/agent-card.json`) advertises twelve skills;
+each skill's description enumerates its tools. Requests go to `/invoke`
+(JSON-RPC) with an envelope naming a skill, a tool, and the tool's arguments
+(exactly the MCP input schema):
 
-Its Agent Card advertises two skills, and the split is the point:
+```json
+{"skill":"svpchain-trading","tool":"build_place_limit_order","args":{"subaccount_number":0,"ticker":"BTC-USD","side":"BUY","size":"0.1","price":"60000"},"bearer":"…"}
+```
 
-- **`svpchain-market-data`** (`required: false`) — read-only market intelligence:
-  perpetual markets, live orderbooks, historical funding, and a **batch-auction
-  clearing-price estimate** for a given order size. Needs no credential and no
-  account.
-- **`svpchain-execution`** (`required: true`) — place and cancel orders under an
-  SVP-DT delegation credential, with the position landing on the *user's*
-  subaccount. **Advertised but not yet served**: it is refused with a reason, so
-  a caller learns the requirement rather than meeting silence.
+| Skill | What it serves |
+|---|---|
+| `svpchain-market-data` | markets, orderbooks, candles, trades, funding, oracle price, plus the legacy `query` form and the batch-auction clearing estimate |
+| `svpchain-account` | subaccounts, balances, orders, fills, transfers, PnL, funding payments |
+| `svpchain-trading` | unsigned order txs (limit/market/conditional/cancel/batch) |
+| `svpchain-funds` | unsigned deposits/withdrawals/transfers + transfer-out caps |
+| `svpchain-broadcast` | `broadcast_signed_tx`, `get_tx_status` |
+| `svpchain-auth` | `auth_challenge` → wallet-sign → `auth_verify` → bearer token |
+| `svpchain-faucet` | testnet faucet |
+| `svpchain-evm` | raw EVM broadcast, swaps, bridge deposits, ERC-20/721 |
+| `svpchain-lendora` | money-market reads + unsigned supply/borrow/repay txs |
+| `svpchain-agent-registry` | `x/agent` queries + unsigned register/bond/deregister txs |
+| `svpchain-delegation` | `x/agentwallet` queries + unsigned delegation-lifecycle txs |
+| `svpchain-execution` | delegated execution (below) + `agent_identity` / `agent_self_register` |
+
+**Auth.** Most tools require a bearer minted by the self-service flow: call
+`auth_challenge` with your owner address, sign the challenge with your wallet
+key, call `auth_verify`. The bearer rides the `Authorization: Bearer` header,
+the envelope's `bearer` field, or is bound to the A2A `contextId` by
+`auth_verify` automatically. Build tools always pin the tx signer to the
+authenticated owner — a caller cannot build a tx for someone else's account.
+
+**Write flow.** The agent holds no caller keys: `build_*` tools return an
+unsigned `TxPayload` the caller signs with its own signer (e.g.
+svpchain-signer-mcp) and lands via `broadcast_signed_tx`.
+
+## Delegated execution
+
+The one place the agent signs on its own: `execute_place_order`,
+`execute_cancel_order`, and `execute_batch_cancel` take an SVP-DT delegation
+proof (the base64 token chain, root first) plus order parameters. The agent
+
+1. verifies the chain with `svpdt.VerifyChain` — signatures against the
+   registered keys in `x/agent`, linkage, monotonicity, expiry, depth, and
+   that the leaf is addressed to *this* agent's DID — with ceilings read from
+   the chain's own `x/agentwallet` params;
+2. pre-flights the caveats (action granted, subaccount inside the grant);
+3. builds the inner order **for the credential's principal** (never a
+   caller-chosen owner), wraps it in `MsgAgentExecDelegated`, signs as the
+   registered operator, and broadcasts.
+
+The position lands on the delegator's subaccount; the chain re-verifies
+everything against live state (epoch, revocation, nonce, budget) in its
+AnteHandler. Wrapped short-term orders ride the chain's gas-free route.
+
+Requires an `[operator]` key. `agent_self_register` (gated to the operator
+itself) registers the agent on chain with `agent_id = did:svp:<operator>`.
 
 ## Running
 
+Full mode:
+
 ```sh
-go run ./cmd/svpchain-dex-agent --indexer-url https://indexer.example.com/v4 --listen :8081
+go run ./cmd/svpchain-dex-agent -config agent.toml   # see agent.toml.example
 ```
 
-The Agent Card is served at `/.well-known/agent-card.json`; requests go to
-`/invoke` (JSON-RPC). A request names a skill and its parameters:
+Read-only mode (the original thin shell — no chain connection, no keys):
 
-```json
-{"skill":"svpchain-market-data","query":"estimate","ticker":"BTC-USD","side":"buy","size":"2.5"}
+```sh
+go run ./cmd/svpchain-dex-agent --indexer-url https://indexer.example.com --listen :8081
 ```
 
-## The one piece of domain logic
-
-The clearing-price estimate is the only opinionated computation here. A market
-that clears by uniform-price batch auction cannot be judged from the touch, so
-the estimate walks the resting book and reports the size-weighted average, the
-worst price consumed, the slippage in basis points, and — most importantly —
-whether the book was deep enough to fill at all. A large order in a thin book is
-exactly the case a naive top-of-book read gets wrong.
-
-## Status
-
-The read layer is complete and tested. Not yet built: the execution layer
-(inbound `VerifyChain` fail-closed, outbound `build_*` carrying a delegation
-proof), on-chain identity (`RegisterAgent` + bond), and x402 payment gating —
-each a documented seam rather than a stub.
+`/healthz` answers load-balancer liveness checks.
 
 ## Development
 
-`svpchain-mcp` (the indexer client) is consumed through a local `replace` while
-it has no tagged release. Tag it before building this outside the workspace.
+Dependencies with sharp edges:
+
+- `github.com/dydxprotocol/v4-chain/protocol` is consumed from a sibling
+  checkout via `replace => ../svpagent/protocol` (the branch carrying
+  `x/agent` + `x/agentwallet`); the fork replace blocks in `go.mod` are copied
+  verbatim from `protocol/go.mod` and must stay in sync. Point the replace at
+  `../svpchain-main/protocol` once that branch merges.
+- `github.com/svpchain/svpdt` is a tagged module and must **never** be
+  replaced (its own tests enforce this).
+- `github.com/svpchain/svpchain-mcp` is consumed at a tagged release; the
+  `lib/mcp/tools` handlers are bridged one-to-one into A2A operations by
+  `internal/toolbridge` (a completeness test pins the 64-tool table).
+
+`go test ./...` runs everything, including an HTTP-level end-to-end smoke and
+a delegated-execution pipeline test that mints real SVP-DT credentials
+against fakes.

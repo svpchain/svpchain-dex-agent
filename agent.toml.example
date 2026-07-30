@@ -1,0 +1,53 @@
+# svpchain-dex-agent full-mode configuration.
+# Start with:  svpchain-dex-agent -config agent.toml
+
+# -- required ------------------------------------------------------------
+chain_id         = "svp-2517-1"
+grpc_addr        = "127.0.0.1:9090"          # chain gRPC
+comet_rpc_url    = "http://127.0.0.1:26657"  # CometBFT RPC (tx status)
+indexer_base_url = "http://127.0.0.1:3002"   # Comlink REST
+listen_addr      = ":8081"
+
+# public_url is what the Agent Card advertises; set it to the externally
+# reachable base URL in any real deployment.
+public_url = "http://localhost:8081"
+
+# -- optional families (unset => those operations refuse with a reason) ---
+# evm_rpc_url                  = "http://127.0.0.1:8545"
+# evm_uniswap_router_addr      = "0x..."   # with evm_wsvp_addr, both-or-neither
+# evm_wsvp_addr                = "0x..."
+# evm_oracle_addr              = "0x..."
+# evm_lendora_comptroller_addr = "0x..."
+# evm_bridge_addr              = "0x..."   # with routes path + source chain id
+# evm_bridge_routes_path       = "bridge-routes.json"
+# evm_bridge_source_chain_id   = 2517
+# [[evm_foreign_chain]]
+# chain_id    = 421614
+# rpc_url     = "https://sepolia-rollup.arbitrum.io/rpc"
+# bridge_addr = "0x..."
+
+# faucet_base_url       = "https://pre-faucet.svpchain.org"
+# transfer_out_cap_path = "caps.json"
+
+# [cache]
+# markets_refresh = "60s"
+
+# [limits]                       # human USDC; zero disables the check
+# deposit_max_usdc        = 0
+# withdraw_max_usdc       = 0
+# transfer_max_usdc       = 0
+# daily_withdraw_cap_usdc = 0
+
+# [fee]                          # non-CLOB tx fee; defaults shown
+# denom     = "asvp"
+# amount    = "25000000000000000"
+# gas_limit = 1000000
+
+# -- operator (unset => svpchain-execution refuses with a reason) ---------
+# The delegated signer's eth_secp256k1 key, hex in a file, or injected via
+# the DEX_AGENT_OPERATOR_KEY env var (which takes precedence).
+# [operator]
+# key_file     = "operator.key"
+# endpoint     = "https://agent.example.com"   # advertised in MsgRegisterAgent
+# capabilities = ["trading"]
+# metadata     = ""

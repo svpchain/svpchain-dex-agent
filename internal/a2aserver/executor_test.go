@@ -5,9 +5,20 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2asrv"
+
 	"github.com/svpchain/svpchain-dex-agent/internal/marketdata"
 	"github.com/svpchain/svpchain-mcp/lib/mcp/indexer"
 )
+
+// execCtxFor wraps a raw request string in the ExecutorContext shape handle
+// expects, as the JSON-RPC handler would.
+func execCtxFor(raw string) *a2asrv.ExecutorContext {
+	return &a2asrv.ExecutorContext{
+		Message: &a2a.Message{Parts: a2a.ContentParts{a2a.NewTextPart(raw)}},
+	}
+}
 
 // fakeReader serves a fixed snapshot, so the dispatch is tested without a live
 // indexer — the executor's job is routing, not fetching.
@@ -45,7 +56,7 @@ func TestHandleMarketDataQueries(t *testing.T) {
 	}
 	for name, raw := range cases {
 		t.Run(name, func(t *testing.T) {
-			out, err := e.handle(context.Background(), raw)
+			out, err := e.handle(context.Background(), execCtxFor(raw))
 			if err != nil {
 				t.Fatalf("%s: %v", name, err)
 			}
@@ -61,7 +72,7 @@ func TestHandleMarketDataQueries(t *testing.T) {
 func TestExecutionSkillRefusesWithAReason(t *testing.T) {
 	e := newTestExecutor()
 	_, err := e.handle(context.Background(),
-		`{"skill":"svpchain-execution","action":"place_order"}`)
+		execCtxFor(`{"skill":"svpchain-execution","action":"place_order"}`))
 	if err == nil {
 		t.Fatal("execution skill returned success; it must refuse")
 	}
@@ -81,7 +92,7 @@ func TestHandleRejectsBadRequests(t *testing.T) {
 		"bad side":      `{"skill":"svpchain-market-data","query":"estimate","ticker":"BTC-USD","side":"sideways","size":"1"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := e.handle(context.Background(), raw); err == nil {
+			if _, err := e.handle(context.Background(), execCtxFor(raw)); err == nil {
 				t.Errorf("%s: expected an error", name)
 			}
 		})
@@ -92,7 +103,7 @@ func TestEstimateFlowsThroughToTheAuctionMath(t *testing.T) {
 	e := newTestExecutor()
 	// Book is 5@100; a size-2 buy clears at exactly 100 with no slippage.
 	out, err := e.handle(context.Background(),
-		`{"skill":"svpchain-market-data","query":"estimate","ticker":"BTC-USD","side":"buy","size":"2"}`)
+		execCtxFor(`{"skill":"svpchain-market-data","query":"estimate","ticker":"BTC-USD","side":"buy","size":"2"}`))
 	if err != nil {
 		t.Fatal(err)
 	}

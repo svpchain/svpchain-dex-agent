@@ -11,34 +11,34 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
 	"github.com/svpchain/svpchain-dex-agent/internal/marketdata"
+	"github.com/svpchain/svpchain-dex-agent/internal/toolbridge"
 )
 
-// Executor answers A2A tasks against the read layer.
+// Executor answers A2A tasks by dispatching them into the operation registry.
 //
-// Deliberately not LLM-driven. The read layer is a thin shell: a request names
-// a skill and its parameters as JSON, and the executor dispatches it. There is
-// no reasoning to do here — pricing an order or listing markets is a lookup,
-// and putting a model in front of it would add cost, latency, and a failure
-// mode for no gain. The intelligence the checklist allows is the batch-auction
-// estimate, which lives in the market-data service, not here.
+// Deliberately not LLM-driven. A request names a skill, a tool, and its
+// arguments as JSON, and the executor dispatches it — pricing an order or
+// building a tx payload is a lookup, and putting a model in front of it would
+// add cost, latency, and a failure mode for no gain.
 type Executor struct {
 	market *marketdata.Service
+
+	// registry and authr are nil in legacy read-only mode (no config file):
+	// only the market-data legacy queries answer, everything else refuses.
+	registry *toolbridge.Registry
+	authr    *AuthResolver
 }
 
 var _ a2asrv.AgentExecutor = (*Executor)(nil)
 
-// NewExecutor returns an executor backed by a market-data service.
+// NewExecutor returns a read-only executor backed by a market-data service.
 func NewExecutor(market *marketdata.Service) *Executor {
 	return &Executor{market: market}
 }
 
-// request is the JSON a caller sends in the task message.
-type request struct {
-	Skill  string `json:"skill"`
-	Query  string `json:"query"`
-	Ticker string `json:"ticker"`
-	Side   string `json:"side"`
-	Size   string `json:"size"`
+// NewFullExecutor returns an executor serving the whole operation registry.
+func NewFullExecutor(market *marketdata.Service, registry *toolbridge.Registry, authr *AuthResolver) *Executor {
+	return &Executor{market: market, registry: registry, authr: authr}
 }
 
 func (e *Executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
@@ -57,22 +57,24 @@ func (e *Executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 			return
 		}
 
-		result, err := e.handle(ctx, messageText(execCtx.Message))
+		result, err := e.handle(ctx, execCtx)
 		if err != nil {
-			// A refused or malformed request is reported as a message, not a
-			// transport error: the task ran and produced an answer, and that
-			// answer is "no". A caller distinguishes this from a crash.
-			yield(a2a.NewMessageForTask(a2a.MessageRoleAgent, execCtx,
-				a2a.NewTextPart(fmt.Sprintf("error: %v", err))), nil)
-			return
+			// A refused or malformed request completes the task with the
+			// reason as its answer, not a transport error or a failed state:
+			// the task ran and produced an answer, and that answer is "no".
+			// A caller distinguishes this from a crash.
+			result = fmt.Sprintf("error: %v", err)
 		}
 
-		yield(a2a.NewMessageForTask(a2a.MessageRoleAgent, execCtx, a2a.NewTextPart(result)), nil)
+		// The answer rides the terminal status update — once the submitted
+		// task exists, the protocol forbids bare Message events.
+		reply := a2a.NewMessageForTask(a2a.MessageRoleAgent, execCtx, a2a.NewTextPart(result))
+		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCompleted, reply), nil)
 	}
 }
 
-// Cancel is a no-op: read-layer requests are synchronous lookups with nothing
-// to unwind.
+// Cancel is a no-op: operations are synchronous request/response calls with
+// nothing to unwind.
 func (e *Executor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
 		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCanceled, nil), nil)
@@ -80,32 +82,73 @@ func (e *Executor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorContext) 
 }
 
 // handle dispatches one request and returns its JSON result.
-func (e *Executor) handle(ctx context.Context, raw string) (string, error) {
-	var req request
+func (e *Executor) handle(ctx context.Context, execCtx *a2asrv.ExecutorContext) (string, error) {
+	raw := messageText(execCtx.Message)
+
+	var req Request
 	if err := json.Unmarshal([]byte(raw), &req); err != nil {
 		return "", fmt.Errorf("request must be JSON naming a skill: %w", err)
 	}
-
-	switch req.Skill {
-	case SkillMarketData:
-		return e.handleMarketData(ctx, req)
-	case SkillExecution:
-		// ★ Advertised on the card, refused here. The execution layer verifies
-		// a delegation proof and places orders on the user's subaccount; none
-		// of that exists yet. Refusing with the reason — rather than omitting
-		// the skill — is what tells a caller the capability is coming and what
-		// it will require, instead of leaving them to guess from silence.
-		return "", fmt.Errorf(
-			"execution requires a delegation credential and is not yet available; "+
-				"only the %s skill is served today", SkillMarketData)
-	case "":
-		return "", fmt.Errorf("no skill named; expected %q or %q", SkillMarketData, SkillExecution)
-	default:
-		return "", fmt.Errorf("unknown skill %q", req.Skill)
+	if req.Skill == "" {
+		return "", fmt.Errorf("no skill named")
 	}
+
+	// Legacy read-layer form: {"skill":"svpchain-market-data","query":...}.
+	// Served straight from the market-data service so pre-envelope callers
+	// (and the original examples on the card) keep working byte-for-byte.
+	if req.Skill == toolbridge.SkillMarketData && req.Query != "" {
+		return e.handleMarketData(ctx, req)
+	}
+
+	if e.registry == nil {
+		switch req.Skill {
+		case toolbridge.SkillMarketData:
+			return "", fmt.Errorf("no query named for %s", toolbridge.SkillMarketData)
+		case toolbridge.SkillExecution:
+			// ★ Advertised on the read-only card, refused here with the
+			// requirement — a caller learns what execution needs instead of
+			// meeting silence.
+			return "", fmt.Errorf(
+				"execution requires a delegation credential and an operator-configured deployment; "+
+					"this read-only deployment serves only the %s skill", toolbridge.SkillMarketData)
+		default:
+			return "", fmt.Errorf(
+				"unknown skill %q; this read-only deployment serves only the %s skill (run with -config for the full agent)",
+				req.Skill, toolbridge.SkillMarketData)
+		}
+	}
+
+	if req.Tool == "" {
+		return "", fmt.Errorf("no tool named for %s", req.Skill)
+	}
+	op, ok := e.registry.Lookup(req.Tool)
+	if !ok {
+		return "", fmt.Errorf("unknown tool %q", req.Tool)
+	}
+	if op.Skill != req.Skill {
+		return "", fmt.Errorf("tool %q belongs to skill %q, not %q", req.Tool, op.Skill, req.Skill)
+	}
+
+	if e.authr != nil {
+		ctx = e.authr.Attach(ctx, execCtx, &req)
+	}
+
+	resp := Response{Skill: req.Skill, Tool: req.Tool}
+	result, err := op.Call(ctx, req.Args)
+	if err != nil {
+		resp.Error = err.Error()
+	} else {
+		resp.OK = true
+		resp.Result = result
+	}
+	b, err := json.Marshal(resp)
+	if err != nil {
+		return "", fmt.Errorf("encode result: %w", err)
+	}
+	return string(b), nil
 }
 
-func (e *Executor) handleMarketData(ctx context.Context, req request) (string, error) {
+func (e *Executor) handleMarketData(ctx context.Context, req Request) (string, error) {
 	switch req.Query {
 	case "markets":
 		return asJSON(e.market.Markets(ctx))
@@ -121,8 +164,6 @@ func (e *Executor) handleMarketData(ctx context.Context, req request) (string, e
 			return "", err
 		}
 		return asJSON(e.market.EstimateClearing(ctx, req.Ticker, side, req.Size))
-	case "":
-		return "", fmt.Errorf("no query named for %s", SkillMarketData)
 	default:
 		return "", fmt.Errorf("unknown query %q", req.Query)
 	}

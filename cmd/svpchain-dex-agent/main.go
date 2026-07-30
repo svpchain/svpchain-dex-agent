@@ -1,11 +1,15 @@
-// Command svpchain-dex-agent is the read layer of an SVP-Chain DEX agent: an
-// A2A service that answers market-data questions from the public indexer.
+// Command svpchain-dex-agent is an A2A agent for an SVP-Chain perpetuals DEX.
 //
-// It is a thin shell by design. It holds no keys, opens no chain connection,
-// and depends on no on-chain delegation module — so it can be deployed, and
-// billed per call over x402, before any of the execution or delegation
-// machinery exists. The execution skill is advertised on its Agent Card but
-// refuses until that machinery is built.
+// Two modes, chosen by flags:
+//
+//   - Full mode (-config agent.toml): every operation family — market data,
+//     accounts, unsigned tx building, broadcast, self-service auth, faucet,
+//     EVM, Lendora, the chain's agent/agentwallet modules, and delegated
+//     execution when an operator key is configured.
+//
+//   - Read-only mode (--indexer-url, no -config): the original thin shell.
+//     It holds no keys and opens no chain connection, so it can be deployed
+//     against nothing but the public indexer.
 package main
 
 import (
@@ -17,38 +21,59 @@ import (
 	"syscall"
 
 	"github.com/svpchain/svpchain-dex-agent/internal/a2aserver"
+	"github.com/svpchain/svpchain-dex-agent/internal/config"
+	"github.com/svpchain/svpchain-dex-agent/internal/wire"
 )
 
 func main() {
-	listenAddr := flag.String("listen", ":8081", "bind address for the A2A endpoint")
+	configPath := flag.String("config", "", "TOML config for the full agent (see internal/config)")
+	listenAddr := flag.String("listen", ":8081", "bind address for the A2A endpoint (read-only mode)")
 	publicURL := flag.String("public-url", "", "public base URL advertised in the Agent Card (default http://<listen>)")
-	indexerURL := flag.String("indexer-url", envOr("DEX_INDEXER_URL", ""), "base URL of the DEX indexer (Comlink) REST API")
+	indexerURL := flag.String("indexer-url", envOr("DEX_INDEXER_URL", ""), "base URL of the DEX indexer (Comlink) REST API (read-only mode)")
 	flag.Parse()
-
-	if *indexerURL == "" {
-		fmt.Fprintln(os.Stderr, "error: --indexer-url (or DEX_INDEXER_URL) is required")
-		os.Exit(2)
-	}
-
-	public := *publicURL
-	if public == "" {
-		public = "http://localhost" + *listenAddr
-	}
 
 	// Stop cleanly on SIGINT/SIGTERM so a container orchestrator gets a prompt
 	// exit rather than a killed process.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	err := a2aserver.StartServer(ctx, a2aserver.Config{
-		ListenAddr: *listenAddr,
-		PublicURL:  public,
-		IndexerURL: *indexerURL,
-	})
+	var err error
+	if *configPath != "" {
+		err = runFull(ctx, *configPath)
+	} else {
+		err = runReadOnly(ctx, *listenAddr, *publicURL, *indexerURL)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "svpchain-dex-agent: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func runFull(ctx context.Context, configPath string) error {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return err
+	}
+	app, err := wire.Build(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer app.Close()
+	return a2aserver.StartFull(ctx, cfg, app)
+}
+
+func runReadOnly(ctx context.Context, listenAddr, publicURL, indexerURL string) error {
+	if indexerURL == "" {
+		return fmt.Errorf("either -config or --indexer-url (or DEX_INDEXER_URL) is required")
+	}
+	if publicURL == "" {
+		publicURL = "http://localhost" + listenAddr
+	}
+	return a2aserver.StartServer(ctx, a2aserver.Config{
+		ListenAddr: listenAddr,
+		PublicURL:  publicURL,
+		IndexerURL: indexerURL,
+	})
 }
 
 func envOr(key, fallback string) string {
