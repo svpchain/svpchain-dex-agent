@@ -33,10 +33,12 @@
 #   --indexer <url>                Default http://127.0.0.1:3002.  SVPCHAIN_INDEXER
 #   --listen-port <port>           Default 8081.          SVPCHAIN_AGENT_LISTEN_PORT
 #   --public-url <url>             Base URL advertised in the Agent Card.
-#                                  Default http://<host-part-of --host>:<port>.
+#                                  Default https://agent-testnet.svpchain.org.
 #                                  Set it to the real externally reachable URL
-#                                  (e.g. behind TLS/a proxy) — other agents call
-#                                  the card's URL. SVPCHAIN_AGENT_PUBLIC_URL
+#                                  of THIS deployment — other agents call the
+#                                  card's URL, so a wrong value makes the agent
+#                                  discoverable but unreachable. A trailing
+#                                  slash is stripped. SVPCHAIN_AGENT_PUBLIC_URL
 #   --operator-key-file <path>     LOCAL file holding the operator's hex
 #                                  eth_secp256k1 key. Shipped (mode 600) next to
 #                                  agent.toml and referenced as key_file, turning
@@ -122,7 +124,7 @@ grpc_addr="${SVPCHAIN_GRPC_ADDR:-127.0.0.1:9090}"
 comet_rpc="${SVPCHAIN_COMET_RPC:-http://127.0.0.1:26657}"
 indexer="${SVPCHAIN_INDEXER:-http://127.0.0.1:3002}"
 listen_port="${SVPCHAIN_AGENT_LISTEN_PORT:-8081}"
-public_url="${SVPCHAIN_AGENT_PUBLIC_URL:-}"
+public_url="${SVPCHAIN_AGENT_PUBLIC_URL:-https://agent-testnet.svpchain.org}"
 operator_key_file="${SVPCHAIN_AGENT_OPERATOR_KEY_FILE:-}"
 operator_endpoint=""
 operator_capabilities="trading"
@@ -200,12 +202,9 @@ done
 
 : "${host:=${SVPCHAIN_DEPLOY_HOST:-}}"
 
-# public_url defaults from the host part of --host once both are known:
-# http://<hostname>:<listen_port>. Real deployments behind TLS/proxies should
-# pass --public-url explicitly — the card's URL is how other agents call us.
-if [[ -z "$public_url" && -n "$host" ]]; then
-  public_url="http://${host#*@}:${listen_port}"
-fi
+# Strip a trailing slash (from the flag or env) so the card's
+# "<public_url>/invoke" join stays clean.
+public_url="${public_url%/}"
 
 # operator_endpoint defaults to the public URL (what agent_self_register
 # advertises on chain).
