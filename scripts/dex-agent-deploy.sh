@@ -366,10 +366,16 @@ services:
       - ${install_dir}/agent.toml:/etc/svpchain-dex-agent/agent.toml:ro
       - ${install_dir}/data:/var/lib/svpchain-dex-agent
 EOF
-  [[ -n "$operator_key_src_abs" ]] && \
+  # Explicit ifs, not `[[ … ]] && echo`: a false test as the function's last
+  # command would make the whole function return non-zero, and under
+  # `set -e` the `render_compose_yaml > file` call site exits the script
+  # silently (bit us when --evm-bridge-routes "" disabled the bridge).
+  if [[ -n "$operator_key_src_abs" ]]; then
     echo "      - ${install_dir}/operator.key:/etc/svpchain-dex-agent/operator.key:ro"
-  [[ -n "$bridge_routes_basename" ]] && \
+  fi
+  if [[ -n "$bridge_routes_basename" ]]; then
     echo "      - ${install_dir}/${bridge_routes_basename}:/etc/svpchain-dex-agent/${bridge_routes_basename}:ro"
+  fi
 }
 
 require_install_args() {
