@@ -44,6 +44,7 @@ type Config struct {
 	Fee      operator.FeeSpec
 
 	AgentQ    agentchain.AgentQuerier
+	AuthQ     AuthKeyQuerier
 	WalletQ   agentchain.WalletQuerier
 	Markets   *markets.Cache
 	Account   chain.AccountClient
@@ -87,7 +88,7 @@ func New(cfg Config) *Service {
 	return &Service{
 		cfg:            cfg,
 		agentID:        agenttypes.AgentIdFromOperator(operatorAddr),
-		resolver:       NewGRPCResolver(cfg.AgentQ),
+		resolver:       NewGRPCResolver(cfg.AgentQ, cfg.AuthQ),
 		paramsCacheTTL: 60,
 		now:            func() int64 { return time.Now().Unix() },
 	}

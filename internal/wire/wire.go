@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"cosmossdk.io/log"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	agenttypes "github.com/dydxprotocol/v4-chain/protocol/x/agent/types"
 	wallettypes "github.com/dydxprotocol/v4-chain/protocol/x/agentwallet/types"
 	"github.com/ethereum/go-ethereum/common"
@@ -302,6 +303,7 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 			ChainID:      cfg.ChainID,
 			Fee:          operator.FeeSpec{Denom: cfg.Fee.Denom, Amount: cfg.Fee.Amount, GasLimit: cfg.Fee.GasLimit},
 			AgentQ:       agentQ,
+			AuthQ:        delegated.NewAuthKeyClient(authtypes.NewQueryClient(grpcConn), encCfg.InterfaceRegistry),
 			WalletQ:      walletQ,
 			Markets:      mkts,
 			Account:      chainDeps.Account,
