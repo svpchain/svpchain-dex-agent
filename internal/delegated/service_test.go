@@ -1,9 +1,12 @@
 package delegated
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"math/big"
 	"strings"
 	"testing"
@@ -23,11 +26,14 @@ import (
 	perptypes "github.com/dydxprotocol/v4-chain/protocol/x/perpetuals/types"
 	"github.com/svpchain/svpdt"
 
+	"github.com/svpchain/svpchain-dex-agent/internal/agentchain"
 	"github.com/svpchain/svpchain-dex-agent/internal/operator"
 	"github.com/svpchain/svpchain-mcp/lib/mcp/chain"
 	"github.com/svpchain/svpchain-mcp/lib/mcp/markets"
 	"github.com/svpchain/svpchain-mcp/lib/mcp/payload"
+	"github.com/svpchain/svpchain-mcp/lib/mcp/policy"
 	"github.com/svpchain/svpchain-mcp/lib/mcp/signer"
+	"github.com/svpchain/svpchain-mcp/lib/mcp/tools"
 )
 
 const (
@@ -163,6 +169,12 @@ func newFixture(t *testing.T) *fixture {
 		Markets:   mkts,
 		Account:   fakeAccount{},
 		Broadcast: bc,
+		Policy: policy.NewEngine([]policy.TenantPolicy{
+			{TenantID: "op-tenant", Owner: operatorAddr},
+			{TenantID: "stranger", Owner: testDelegator},
+		}),
+		Endpoint:     "https://agent.example.com",
+		Capabilities: []string{"trading"},
 	})
 	svc.now = func() int64 { return testNow }
 
@@ -341,5 +353,91 @@ func TestIdentityReportsRegistration(t *testing.T) {
 	}
 	if !out.Registered || out.AgentID != f.agentID {
 		t.Errorf("identity = %+v", out)
+	}
+}
+
+// operatorCtx authenticates as the operator's own tenant.
+func operatorCtx() context.Context {
+	return tools.WithTenant(context.Background(), tools.TenantContext{TenantID: "op-tenant"})
+}
+
+// The registration ops must publish sha256 of the exact served card bytes as
+// the capability hash — the value verifiers recompute from a card fetch — and
+// refuse when invoked by anyone but the operator or before the card is wired.
+func TestSelfRegisterAndUpdatePublishServedCardHash(t *testing.T) {
+	f := newFixture(t)
+	bond := &agentchain.Coin{Denom: "asvp", Amount: "5000"}
+
+	// Before the card bytes are wired, registration must refuse rather than
+	// publish an unverifiable hash.
+	if _, err := f.svc.SelfRegister(operatorCtx(), SelfRegisterInput{Bond: bond}); err == nil ||
+		!strings.Contains(err.Error(), "card bytes not wired") {
+		t.Fatalf("register without card bytes must refuse, got %v", err)
+	}
+
+	cardJSON := []byte(`{"name":"svpchain-dex-agent","skills":[{"id":"x"}]}`)
+	f.svc.SetCapabilityCard(cardJSON)
+	wantHash := sha256.Sum256(cardJSON)
+
+	// A non-operator tenant is refused.
+	strangerCtx := tools.WithTenant(context.Background(), tools.TenantContext{TenantID: "stranger"})
+	if _, err := f.svc.SelfRegister(strangerCtx, SelfRegisterInput{Bond: bond}); err == nil ||
+		!strings.Contains(err.Error(), "operator itself") {
+		t.Fatalf("stranger self-register must refuse, got %v", err)
+	}
+
+	if _, err := f.svc.SelfRegister(operatorCtx(), SelfRegisterInput{Bond: bond}); err != nil {
+		t.Fatal(err)
+	}
+	var reg agenttypes.MsgRegisterAgent
+	decodeSoleTxMsg(t, f.broadcast.txBytes, "/dydxprotocol.agent.MsgRegisterAgent", &reg)
+	if !bytes.Equal(reg.CapabilityHash, wantHash[:]) {
+		t.Errorf("registered capability hash %x, want sha256(card) %x", reg.CapabilityHash, wantHash)
+	}
+	if reg.Endpoint != "https://agent.example.com" || reg.Owner != f.svc.cfg.Operator {
+		t.Errorf("register msg = %+v", reg)
+	}
+
+	if _, err := f.svc.SelfUpdate(operatorCtx(), struct{}{}); err != nil {
+		t.Fatal(err)
+	}
+	var upd agenttypes.MsgUpdateAgent
+	decodeSoleTxMsg(t, f.broadcast.txBytes, "/dydxprotocol.agent.MsgUpdateAgent", &upd)
+	if !bytes.Equal(upd.CapabilityHash, wantHash[:]) {
+		t.Errorf("updated capability hash %x, want %x", upd.CapabilityHash, wantHash)
+	}
+	if len(upd.PublicKey) != 0 {
+		t.Error("self-update must not attempt key rotation")
+	}
+
+	// Identity reports the match against what the (fake) chain returned.
+	out, err := f.svc.Identity(context.Background(), struct{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.CardHash != hex.EncodeToString(wantHash[:]) {
+		t.Errorf("identity card hash = %s", out.CardHash)
+	}
+}
+
+// decodeSoleTxMsg unmarshals the single message of a broadcast TxRaw.
+func decodeSoleTxMsg(t *testing.T, txBytes []byte, wantTypeURL string, msg proto.Message) {
+	t.Helper()
+	var txRaw txtypes.TxRaw
+	if err := proto.Unmarshal(txBytes, &txRaw); err != nil {
+		t.Fatal(err)
+	}
+	var body txtypes.TxBody
+	if err := proto.Unmarshal(txRaw.BodyBytes, &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Messages) != 1 {
+		t.Fatalf("expected 1 msg, got %d", len(body.Messages))
+	}
+	if body.Messages[0].TypeUrl != wantTypeURL {
+		t.Fatalf("type url = %s, want %s", body.Messages[0].TypeUrl, wantTypeURL)
+	}
+	if err := proto.Unmarshal(body.Messages[0].Value, msg); err != nil {
+		t.Fatal(err)
 	}
 }

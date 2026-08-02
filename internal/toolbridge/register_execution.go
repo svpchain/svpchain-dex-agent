@@ -13,6 +13,7 @@ var executionTools = []string{
 	"execute_batch_cancel",
 	"agent_identity",
 	"agent_self_register",
+	"agent_self_update",
 }
 
 // RegisterExecution adds the delegated-execution operations. A nil service
@@ -34,4 +35,5 @@ func (r *Registry) RegisterExecution(s *delegated.Service) {
 	r.add(SkillExecution, "execute_batch_cancel", adaptNative(s.ExecuteBatchCancel))
 	r.add(SkillExecution, "agent_identity", adaptNative(s.Identity))
 	r.add(SkillExecution, "agent_self_register", adaptNative(s.SelfRegister))
+	r.add(SkillExecution, "agent_self_update", adaptNative(s.SelfUpdate))
 }

@@ -55,6 +55,11 @@ type App struct {
 	Indexer  *indexer.Client
 	GrpcConn *grpc.ClientConn
 	Logger   log.Logger
+
+	// Delegated is the execution service (nil when keyless). Exposed so the
+	// server layer can hand it the served agent-card bytes — the capability
+	// hash it registers on chain is sha256 of exactly those bytes.
+	Delegated *delegated.Service
 }
 
 // Close releases the app's long-lived connections.
@@ -318,14 +323,15 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 	registry.RegisterExecution(delegatedSvc)
 
 	return &App{
-		Handlers: handlers,
-		Registry: registry,
-		Markets:  mkts,
-		Lendora:  lendoraMkts,
-		Tenants:  dynamicTenants,
-		Sessions: sessionBearers,
-		Indexer:  idx,
-		GrpcConn: grpcConn,
-		Logger:   logger,
+		Handlers:  handlers,
+		Registry:  registry,
+		Markets:   mkts,
+		Lendora:   lendoraMkts,
+		Tenants:   dynamicTenants,
+		Sessions:  sessionBearers,
+		Indexer:   idx,
+		GrpcConn:  grpcConn,
+		Delegated: delegatedSvc,
+		Logger:    logger,
 	}, nil
 }

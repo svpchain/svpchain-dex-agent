@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"sync"
 	"time"
@@ -63,6 +64,10 @@ type Service struct {
 	cfg      Config
 	agentID  string // did:svp:<operator>, the audience credentials must name
 	resolver *GRPCResolver
+
+	// cardHash is sha256 of the served agent card bytes (SetCapabilityCard);
+	// what SelfRegister/SelfUpdate publish as the capability hash.
+	cardHash []byte
 
 	// seqMu serializes fee-paying (sequence-consuming) txs. Wrapped
 	// short-term clob orders skip sequence increment on chain, so they don't
@@ -358,12 +363,44 @@ type IdentityOutput struct {
 	Status     string `json:"status,omitempty"`
 	Bond       string `json:"bond,omitempty"`
 	Endpoint   string `json:"endpoint,omitempty"`
+
+	// CardHash is sha256 of the agent card as this deployment serves it —
+	// the value verifiers recompute. RegisteredCapabilityHash is what the
+	// chain record carries; when the two differ, verifiers flag the agent
+	// as unverified and agent_self_update repairs it.
+	CardHash                 string `json:"card_hash,omitempty"`
+	RegisteredCapabilityHash string `json:"registered_capability_hash,omitempty"`
+	CardHashMatches          bool   `json:"card_hash_matches"`
+}
+
+// SetCapabilityCard hands the service the exact bytes the deployment serves
+// at /.well-known/agent-card.json. Their sha256 is the capability hash
+// registered on chain: a verifier fetches the card, hashes the body, and
+// compares against the registry — so the hash must be over the served bytes,
+// not any looser summary. Called once at wiring, before serving begins.
+func (s *Service) SetCapabilityCard(cardJSON []byte) {
+	h := sha256.Sum256(cardJSON)
+	s.cardHash = h[:]
+}
+
+// capabilityHash returns the served card's hash, refusing when wiring never
+// provided the card — registering a hash that verifies against nothing would
+// mark the agent unverified everywhere.
+func (s *Service) capabilityHash() ([]byte, error) {
+	if len(s.cardHash) == 0 {
+		return nil, fmt.Errorf("agent card bytes not wired; cannot compute a verifiable capability hash")
+	}
+	return s.cardHash, nil
 }
 
 // Identity reports who this agent is on chain: its operator address, derived
-// DID, and current registration state.
+// DID, current registration state, and whether the registered capability
+// hash still matches the card being served.
 func (s *Service) Identity(ctx context.Context, _ agentchain.EmptyInput) (IdentityOutput, error) {
 	out := IdentityOutput{Operator: s.cfg.Operator, AgentID: s.agentID}
+	if len(s.cardHash) > 0 {
+		out.CardHash = hex.EncodeToString(s.cardHash)
+	}
 	resp, err := s.cfg.AgentQ.AgentByOperator(ctx, &agenttypes.QueryAgentByOperator{Operator: s.cfg.Operator})
 	if err != nil || resp == nil || resp.Agent.AgentId == "" {
 		return out, nil // unregistered is an answer, not an error
@@ -372,64 +409,35 @@ func (s *Service) Identity(ctx context.Context, _ agentchain.EmptyInput) (Identi
 	out.Status = resp.Agent.Status.String()
 	out.Bond = resp.Agent.Bond.String()
 	out.Endpoint = resp.Agent.Endpoint
+	out.RegisteredCapabilityHash = hex.EncodeToString(resp.Agent.CapabilityHash)
+	out.CardHashMatches = len(s.cardHash) > 0 && out.RegisteredCapabilityHash == out.CardHash
 	return out, nil
 }
 
-type SelfRegisterInput struct {
-	// Bond overrides the initial bond; empty means the module's MinBond.
-	Bond *agentchain.Coin `json:"bond,omitempty"`
-}
-
-// SelfRegister signs and broadcasts this agent's own MsgRegisterAgent:
-// owner = operator = the configured key, agent id derived from it, public key
-// the operator's own. Gated on an authenticated tenant whose owner IS the
-// operator — registration escrows the operator's funds (fee + bond), and that
-// decision belongs to whoever holds the operator key, proven via the same
-// auth_challenge flow as everything else.
-func (s *Service) SelfRegister(ctx context.Context, in SelfRegisterInput) (ExecResult, error) {
+// requireOperator gates the registry-mutating operations: the caller must be
+// authenticated as the operator itself. Registration and updates move or
+// re-describe the operator's on-chain identity, and that decision belongs to
+// whoever holds the operator key, proven via the same auth_challenge flow as
+// everything else.
+func (s *Service) requireOperator(ctx context.Context, what string) error {
 	tc, ok := tools.TenantFrom(ctx)
 	if !ok {
-		return ExecResult{}, tools.ErrNoTenant
+		return tools.ErrNoTenant
 	}
 	tp, err := s.cfg.Policy.Tenant(tc.TenantID)
 	if err != nil {
-		return ExecResult{}, err
+		return err
 	}
 	if tp.Owner != s.cfg.Operator {
-		return ExecResult{}, fmt.Errorf(
-			"self-registration moves the operator's funds and may only be invoked by the operator itself (authenticated as %s, operator is %s)",
-			tp.Owner, s.cfg.Operator)
+		return fmt.Errorf(
+			"%s may only be invoked by the operator itself (authenticated as %s, operator is %s)",
+			what, tp.Owner, s.cfg.Operator)
 	}
+	return nil
+}
 
-	var bond sdk.Coin
-	if in.Bond != nil {
-		if bond, err = in.Bond.ToSDK(); err != nil {
-			return ExecResult{}, fmt.Errorf("bond: %w", err)
-		}
-	} else {
-		params, err := s.cfg.AgentQ.Params(ctx, &agenttypes.QueryParams{})
-		if err != nil {
-			return ExecResult{}, fmt.Errorf("fetch agent params for min bond: %w", err)
-		}
-		bond = params.Params.MinBond
-	}
-
-	capHash := sha256.Sum256([]byte(s.cfg.Endpoint))
-	msg := &agenttypes.MsgRegisterAgent{
-		Owner:          s.cfg.Operator,
-		AgentId:        s.agentID,
-		Operator:       s.cfg.Operator,
-		PublicKey:      s.cfg.Priv.PubKey().Bytes(),
-		Endpoint:       s.cfg.Endpoint,
-		CapabilityHash: capHash[:],
-		Capabilities:   s.cfg.Capabilities,
-		InitialBond:    bond,
-		Metadata:       s.cfg.Metadata,
-	}
-	if err := msg.ValidateBasic(); err != nil {
-		return ExecResult{}, err
-	}
-
+// signAndBroadcastOwn signs a fee-paying tx with the operator key and lands it.
+func (s *Service) signAndBroadcastOwn(ctx context.Context, msg sdk.Msg) (ExecResult, error) {
 	s.seqMu.Lock()
 	defer s.seqMu.Unlock()
 	acct, err := s.cfg.Account.Account(ctx, s.cfg.Operator)
@@ -445,4 +453,84 @@ func (s *Service) SelfRegister(ctx context.Context, in SelfRegisterInput) (ExecR
 		return ExecResult{}, fmt.Errorf("broadcast: %w", err)
 	}
 	return ExecResult{TxHash: res.TxHash, Code: res.Code, RawLog: res.RawLog, AgentID: s.agentID, Principal: s.cfg.Operator}, nil
+}
+
+type SelfRegisterInput struct {
+	// Bond overrides the initial bond; empty means the module's MinBond.
+	Bond *agentchain.Coin `json:"bond,omitempty"`
+}
+
+// SelfRegister signs and broadcasts this agent's own MsgRegisterAgent:
+// owner = operator = the configured key, agent id derived from it, public key
+// the operator's own, capability hash = sha256 of the served agent card so
+// verifiers can confirm the card matches the registration.
+func (s *Service) SelfRegister(ctx context.Context, in SelfRegisterInput) (ExecResult, error) {
+	if err := s.requireOperator(ctx, "self-registration escrows the operator's funds and"); err != nil {
+		return ExecResult{}, err
+	}
+
+	var bond sdk.Coin
+	var err error
+	if in.Bond != nil {
+		if bond, err = in.Bond.ToSDK(); err != nil {
+			return ExecResult{}, fmt.Errorf("bond: %w", err)
+		}
+	} else {
+		params, err := s.cfg.AgentQ.Params(ctx, &agenttypes.QueryParams{})
+		if err != nil {
+			return ExecResult{}, fmt.Errorf("fetch agent params for min bond: %w", err)
+		}
+		bond = params.Params.MinBond
+	}
+
+	capHash, err := s.capabilityHash()
+	if err != nil {
+		return ExecResult{}, err
+	}
+	msg := &agenttypes.MsgRegisterAgent{
+		Owner:          s.cfg.Operator,
+		AgentId:        s.agentID,
+		Operator:       s.cfg.Operator,
+		PublicKey:      s.cfg.Priv.PubKey().Bytes(),
+		Endpoint:       s.cfg.Endpoint,
+		CapabilityHash: capHash,
+		Capabilities:   s.cfg.Capabilities,
+		InitialBond:    bond,
+		Metadata:       s.cfg.Metadata,
+	}
+	if err := msg.ValidateBasic(); err != nil {
+		return ExecResult{}, err
+	}
+	return s.signAndBroadcastOwn(ctx, msg)
+}
+
+// SelfUpdate signs and broadcasts MsgUpdateAgent for this agent, refreshing
+// the on-chain record to what this deployment currently serves: endpoint,
+// capabilities, metadata, and — the reason this operation exists — the
+// capability hash of the card as served. Run it after any deploy that changes
+// the card, or a verifier comparing card-to-registration flags the agent
+// unverified. Only valid when this agent self-registered (owner == operator);
+// an externally-owned agent updates via build_update_agent, owner-signed.
+func (s *Service) SelfUpdate(ctx context.Context, _ agentchain.EmptyInput) (ExecResult, error) {
+	if err := s.requireOperator(ctx, "self-update rewrites the on-chain registration and"); err != nil {
+		return ExecResult{}, err
+	}
+	capHash, err := s.capabilityHash()
+	if err != nil {
+		return ExecResult{}, err
+	}
+	msg := &agenttypes.MsgUpdateAgent{
+		Owner:          s.cfg.Operator,
+		AgentId:        s.agentID,
+		Endpoint:       s.cfg.Endpoint,
+		CapabilityHash: capHash,
+		Capabilities:   s.cfg.Capabilities,
+		Metadata:       s.cfg.Metadata,
+		// PublicKey deliberately empty: key rotation was removed on chain and
+		// a non-empty key is rejected with a reason.
+	}
+	if err := msg.ValidateBasic(); err != nil {
+		return ExecResult{}, err
+	}
+	return s.signAndBroadcastOwn(ctx, msg)
 }
