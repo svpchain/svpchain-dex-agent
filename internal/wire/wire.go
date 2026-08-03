@@ -111,7 +111,7 @@ func (a dynamicTenantAdapter) LookupTenantPolicy(tenantID string) (policy.Tenant
 func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 	logger := log.NewLogger(os.Stderr).With("module", "dex-agent")
 
-	grpcConn, err := chain.Dial(ctx, cfg.GrpcAddr)
+	grpcConn, err := chain.Dial(ctx, cfg.Chain.GrpcAddr)
 	if err != nil {
 		return nil, fmt.Errorf("dial chain gRPC: %w", err)
 	}
@@ -125,7 +125,7 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 		SubaccountQuery: chain.NewSubaccountQueryClient(grpcConn),
 		BankQuery:       chain.NewBankQueryClient(grpcConn),
 	}
-	cometClient, err := chain.NewCometBftClient(cfg.CometRPCURL)
+	cometClient, err := chain.NewCometBftClient(cfg.Chain.CometRPCURL)
 	if err != nil {
 		grpcConn.Close()
 		return nil, fmt.Errorf("cometbft client: %w", err)
@@ -227,7 +227,7 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 		faucetClient = faucet.NewClient(cfg.FaucetBaseURL, faucet.Options{})
 	}
 
-	idx := indexer.NewClient(cfg.IndexerBaseURL, indexer.Options{})
+	idx := indexer.NewClient(cfg.Chain.IndexerBaseURL, indexer.Options{})
 	mkts := markets.NewCache(chainDeps.ClobQuery, chainDeps.PerpetualsQuery, time.Duration(cfg.Cache.MarketsRefresh), logger)
 
 	limitsCfg := limits.Config{
@@ -263,7 +263,7 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 		Indexer:           idx,
 		Markets:           mkts,
 		LendoraMarkets:    lendoraMkts,
-		Builder:           builder.NewAssembler(cfg.ChainID, cfg.Fee.Denom, cfg.Fee.Amount, cfg.Fee.GasLimit),
+		Builder:           builder.NewAssembler(cfg.Chain.ID, cfg.Fee.Denom, cfg.Fee.Amount, cfg.Fee.GasLimit),
 		Faucet:            faucetClient,
 		EVM:               evmDeps,
 		Policy:            policyEngine,
@@ -281,7 +281,7 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 		InterfaceRegistry: encCfg.InterfaceRegistry,
 		BroadcastMode:     cfg.BroadcastMode,
 	}
-	handlers := tools.New(cfg.ChainID, deps)
+	handlers := tools.New(cfg.Chain.ID, deps)
 
 	registry := toolbridge.New(handlers)
 
@@ -305,7 +305,7 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 		delegatedSvc = delegated.New(delegated.Config{
 			Priv:         operatorPriv,
 			Operator:     operatorAddr,
-			ChainID:      cfg.ChainID,
+			ChainID:      cfg.Chain.ID,
 			Fee:          operator.FeeSpec{Denom: cfg.Fee.Denom, Amount: cfg.Fee.Amount, GasLimit: cfg.Fee.GasLimit},
 			AgentQ:       agentQ,
 			AuthQ:        delegated.NewAuthKeyClient(authtypes.NewQueryClient(grpcConn), encCfg.InterfaceRegistry),

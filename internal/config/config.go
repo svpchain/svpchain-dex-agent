@@ -21,11 +21,8 @@ import (
 
 // Config is the agent's configuration.
 type Config struct {
-	ChainID        string `toml:"chain_id"`
-	GrpcAddr       string `toml:"grpc_addr"`
-	CometRPCURL    string `toml:"comet_rpc_url"`
-	IndexerBaseURL string `toml:"indexer_base_url"`
-	ListenAddr     string `toml:"listen_addr"`
+	Chain      ChainConfig `toml:"chain"`
+	ListenAddr string      `toml:"listen_addr"`
 
 	// PublicURL is how callers reach this agent, advertised in the Agent Card.
 	// Defaults to "http://localhost"+ListenAddr when empty.
@@ -78,6 +75,18 @@ type Config struct {
 	Limits   LimitsConfig `toml:"limits"`
 	Fee      FeeConfig    `toml:"fee"`
 	Operator Operator     `toml:"operator"`
+}
+
+// ChainConfig points the agent at the DEX chain: its cosmos-sdk chain id and
+// the endpoints every chain-facing family shares — queries and broadcast over
+// gRPC, tx status over CometBFT RPC, and reads over the Comlink indexer. All
+// four are required; the chain's optional EVM JSON-RPC stays with the evm_*
+// family it gates.
+type ChainConfig struct {
+	ID             string `toml:"id"`
+	GrpcAddr       string `toml:"grpc_addr"`
+	CometRPCURL    string `toml:"comet_rpc_url"`
+	IndexerBaseURL string `toml:"indexer_base_url"`
 }
 
 // Operator configures the agent's own on-chain identity: the eth_secp256k1
@@ -180,17 +189,17 @@ func (c *Config) ApplyDefaults() {
 // Validate enforces the required network-level fields and the optional
 // families' invariants.
 func (c *Config) Validate() error {
-	if c.ChainID == "" {
-		return fmt.Errorf("chain_id is required")
+	if c.Chain.ID == "" {
+		return fmt.Errorf("chain.id is required")
 	}
-	if c.GrpcAddr == "" {
-		return fmt.Errorf("grpc_addr is required")
+	if c.Chain.GrpcAddr == "" {
+		return fmt.Errorf("chain.grpc_addr is required")
 	}
-	if c.CometRPCURL == "" {
-		return fmt.Errorf("comet_rpc_url is required")
+	if c.Chain.CometRPCURL == "" {
+		return fmt.Errorf("chain.comet_rpc_url is required")
 	}
-	if c.IndexerBaseURL == "" {
-		return fmt.Errorf("indexer_base_url is required")
+	if c.Chain.IndexerBaseURL == "" {
+		return fmt.Errorf("chain.indexer_base_url is required")
 	}
 	if c.ListenAddr == "" {
 		return fmt.Errorf("listen_addr is required")
