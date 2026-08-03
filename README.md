@@ -68,9 +68,10 @@ itself) registers the agent on chain with `agent_id = did:svp:<operator>`.
 
 **Agent chain.** By default the DEX chain itself carries `x/agent` +
 `x/agentwallet`. When it doesn't, an optional `[agent_chain]` section
-(`id`, `grpc_addr`) points the agent-identity families — registry and
+(`id`, `rest_url`) points the agent-identity families — registry and
 delegation queries/builds, self-registration, and delegated execution — at
-the chain that does. Caller-signed registry/delegation txs then land via
+the chain that does, over its Cosmos REST API (the gRPC-gateway, typically
+`:1317`). Caller-signed registry/delegation txs then land via
 `broadcast_agent_chain_tx` (registered under the agent-registry skill), since
 `broadcast_signed_tx` targets the DEX chain. Note delegated orders execute on
 whichever chain verifies the delegation, so a split deployment trades against

@@ -37,6 +37,7 @@ import (
 	"github.com/svpchain/svpchain-mcp/lib/mcp/tools"
 
 	"github.com/svpchain/svpchain-dex-agent/internal/agentchain"
+	"github.com/svpchain/svpchain-dex-agent/internal/agentrest"
 	"github.com/svpchain/svpchain-dex-agent/internal/config"
 	"github.com/svpchain/svpchain-dex-agent/internal/delegated"
 	"github.com/svpchain/svpchain-dex-agent/internal/operator"
@@ -54,11 +55,7 @@ type App struct {
 	Sessions *auth.SessionBearers
 	Indexer  *indexer.Client
 	GrpcConn *grpc.ClientConn
-
-	// AgentGrpcConn is the separate [agent_chain] connection; nil when the
-	// agent-identity families share the DEX chain connection.
-	AgentGrpcConn *grpc.ClientConn
-	Logger        log.Logger
+	Logger   log.Logger
 
 	// Delegated is the execution service (nil when keyless). Exposed so the
 	// server layer can hand it the served agent-card bytes — the capability
@@ -70,9 +67,6 @@ type App struct {
 func (a *App) Close() {
 	if a.GrpcConn != nil {
 		_ = a.GrpcConn.Close()
-	}
-	if a.AgentGrpcConn != nil {
-		_ = a.AgentGrpcConn.Close()
 	}
 }
 
@@ -294,28 +288,32 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 
 	// The agent-identity families — x/agent registry, x/agentwallet
 	// delegation, delegated execution — run against the chain that carries
-	// those modules. By default that is the DEX chain itself; a configured
-	// [agent_chain] dials its own connection, and everything below (queries,
-	// tx builds, the operator's signing and broadcast) follows it.
-	agentConn := grpcConn
+	// those modules. By default that is the DEX chain itself over the shared
+	// gRPC conn; a configured [agent_chain] switches everything below
+	// (queries, tx builds, the operator's signing and broadcast) to that
+	// chain's Cosmos REST API instead.
 	agentChainID := cfg.DEXChain.ID
-	agentAccount := chainDeps.Account
-	agentBroadcast := chainDeps.Broadcast
-	var agentGrpcConn *grpc.ClientConn
+	var (
+		agentQ         agentchain.AgentQuerier
+		walletQ        agentchain.WalletQuerier
+		agentAccount   chain.AccountClient   = chainDeps.Account
+		agentBroadcast chain.BroadcastClient = chainDeps.Broadcast
+		agentAuth      delegated.AuthAccountQuerier
+	)
 	if cfg.AgentChain.Enabled() {
-		agentGrpcConn, err = chain.Dial(ctx, cfg.AgentChain.GrpcAddr)
-		if err != nil {
-			grpcConn.Close()
-			return nil, fmt.Errorf("dial agent chain gRPC: %w", err)
-		}
-		agentConn = agentGrpcConn
+		rest := agentrest.New(cfg.AgentChain.RestURL, encCfg.Codec, encCfg.InterfaceRegistry)
 		agentChainID = cfg.AgentChain.ID
-		agentAccount = chain.NewAccountClient(agentGrpcConn, encCfg.InterfaceRegistry)
-		agentBroadcast = chain.NewBroadcastClient(agentGrpcConn)
-		logger.Info("agent chain configured", "chain_id", agentChainID, "grpc", cfg.AgentChain.GrpcAddr)
+		agentQ = rest
+		walletQ = rest.Wallet()
+		agentAccount = rest.AccountClient()
+		agentBroadcast = rest
+		agentAuth = rest
+		logger.Info("agent chain configured", "chain_id", agentChainID, "rest", cfg.AgentChain.RestURL)
+	} else {
+		agentQ = agenttypes.NewQueryClient(grpcConn)
+		walletQ = wallettypes.NewQueryClient(grpcConn)
+		agentAuth = authtypes.NewQueryClient(grpcConn)
 	}
-	agentQ := agenttypes.NewQueryClient(agentConn)
-	walletQ := wallettypes.NewQueryClient(agentConn)
 	agentAsm := builder.NewAssembler(agentChainID, cfg.Fee.Denom, cfg.Fee.Amount, cfg.Fee.GasLimit)
 	agentSvc := agentchain.New(agentQ, walletQ, agentAsm, agentAccount, policyEngine, agentBroadcast, encCfg.InterfaceRegistry)
 	registry.RegisterAgentChain(agentSvc)
@@ -326,9 +324,6 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 	operatorPriv, operatorAddr, err := operator.Load(cfg.Operator)
 	if err != nil {
 		grpcConn.Close()
-		if agentGrpcConn != nil {
-			agentGrpcConn.Close()
-		}
 		return nil, err
 	}
 	var delegatedSvc *delegated.Service
@@ -339,7 +334,7 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 			ChainID:      agentChainID,
 			Fee:          operator.FeeSpec{Denom: cfg.Fee.Denom, Amount: cfg.Fee.Amount, GasLimit: cfg.Fee.GasLimit},
 			AgentQ:       agentQ,
-			AuthQ:        delegated.NewAuthKeyClient(authtypes.NewQueryClient(agentConn), encCfg.InterfaceRegistry),
+			AuthQ:        delegated.NewAuthKeyClient(agentAuth, encCfg.InterfaceRegistry),
 			WalletQ:      walletQ,
 			Markets:      mkts,
 			Account:      agentAccount,
@@ -360,10 +355,9 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 		Lendora:       lendoraMkts,
 		Tenants:       dynamicTenants,
 		Sessions:      sessionBearers,
-		Indexer:       idx,
-		GrpcConn:      grpcConn,
-		AgentGrpcConn: agentGrpcConn,
-		Delegated:     delegatedSvc,
-		Logger:        logger,
+		Indexer:   idx,
+		GrpcConn:  grpcConn,
+		Delegated: delegatedSvc,
+		Logger:    logger,
 	}, nil
 }

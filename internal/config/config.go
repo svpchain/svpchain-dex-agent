@@ -72,17 +72,19 @@ type DEXChainConfig struct {
 
 // AgentChainConfig points the agent-identity families — x/agent registry,
 // x/agentwallet delegation, and delegated execution — at the chain carrying
-// those modules when it is not the DEX chain itself. Optional: unset, those
-// families run against the DEX chain connection (the single-chain default).
-// Note delegated orders execute on whichever chain verifies the delegation,
-// so a split deployment trades against the agent chain's CLOB.
+// those modules when it is not the DEX chain itself. The agent chain is
+// reached over its Cosmos REST API (the gRPC-gateway, typically :1317), not
+// gRPC. Optional: unset, those families run against the DEX chain connection
+// (the single-chain default). Note delegated orders execute on whichever
+// chain verifies the delegation, so a split deployment trades against the
+// agent chain's CLOB.
 type AgentChainConfig struct {
-	ID       string `toml:"id"`
-	GrpcAddr string `toml:"grpc_addr"`
+	ID      string `toml:"id"`
+	RestURL string `toml:"rest_url"`
 }
 
 // Enabled reports whether a separate agent chain is configured.
-func (a AgentChainConfig) Enabled() bool { return a.GrpcAddr != "" }
+func (a AgentChainConfig) Enabled() bool { return a.RestURL != "" }
 
 // EVMConfig holds the per-protocol contract bindings on the DEX chain's EVM
 // side. Each subtable is an independent optional family: left empty, its
@@ -239,8 +241,8 @@ func (c *Config) Validate() error {
 	if c.ListenAddr == "" {
 		return fmt.Errorf("listen_addr is required")
 	}
-	if (c.AgentChain.ID == "") != (c.AgentChain.GrpcAddr == "") {
-		return fmt.Errorf("agent_chain.id and agent_chain.grpc_addr must be set together")
+	if (c.AgentChain.ID == "") != (c.AgentChain.RestURL == "") {
+		return fmt.Errorf("agent_chain.id and agent_chain.rest_url must be set together")
 	}
 	if err := c.Fee.validate(); err != nil {
 		return err

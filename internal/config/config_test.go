@@ -62,13 +62,13 @@ func TestLoadRejectsMissingRequiredFields(t *testing.T) {
 
 func TestAgentChainIsBothOrNeither(t *testing.T) {
 	if _, err := Load(writeConfig(t, minimal+`
-agent_chain.grpc_addr = "127.0.0.1:9190"
+agent_chain.rest_url = "http://127.0.0.1:1317"
 `)); err == nil || !strings.Contains(err.Error(), "agent_chain.id") {
-		t.Errorf("grpc_addr without id must fail, got %v", err)
+		t.Errorf("rest_url without id must fail, got %v", err)
 	}
 	cfg, err := Load(writeConfig(t, minimal+`
-agent_chain.id        = "svpagent-1"
-agent_chain.grpc_addr = "127.0.0.1:9190"
+agent_chain.id       = "svpagent-1"
+agent_chain.rest_url = "http://127.0.0.1:1317"
 `))
 	if err != nil {
 		t.Fatal(err)

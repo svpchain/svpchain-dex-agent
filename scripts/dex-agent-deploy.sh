@@ -34,10 +34,10 @@
 #   --agent-chain-id <id>          Chain id of a separate chain carrying
 #                                  x/agent + x/agentwallet. Unset (default):
 #                                  the agent-identity families use the DEX
-#                                  chain. Set with --agent-chain-grpc.
+#                                  chain. Set with --agent-chain-rest.
 #                                  SVPCHAIN_AGENT_CHAIN_ID
-#   --agent-chain-grpc <h:p>       gRPC endpoint of that chain.
-#                                  SVPCHAIN_AGENT_CHAIN_GRPC
+#   --agent-chain-rest <url>       Cosmos REST (gRPC-gateway, :1317) base URL
+#                                  of that chain. SVPCHAIN_AGENT_CHAIN_REST
 #   --listen-port <port>           Default 8081.          SVPCHAIN_AGENT_LISTEN_PORT
 #   --public-url <url>             Base URL advertised in the Agent Card.
 #                                  Default https://agent-testnet.svpchain.org.
@@ -129,7 +129,7 @@ grpc_addr="${SVPCHAIN_GRPC_ADDR:-127.0.0.1:9090}"
 comet_rpc="${SVPCHAIN_COMET_RPC:-http://127.0.0.1:26657}"
 indexer="${SVPCHAIN_INDEXER:-http://127.0.0.1:3002}"
 agent_chain_id="${SVPCHAIN_AGENT_CHAIN_ID:-}"
-agent_chain_grpc="${SVPCHAIN_AGENT_CHAIN_GRPC:-}"
+agent_chain_rest="${SVPCHAIN_AGENT_CHAIN_REST:-}"
 listen_port="${SVPCHAIN_AGENT_LISTEN_PORT:-8081}"
 public_url="${SVPCHAIN_AGENT_PUBLIC_URL:-https://agent-testnet.svpchain.org}"
 operator_key_file="${SVPCHAIN_AGENT_OPERATOR_KEY_FILE:-}"
@@ -169,7 +169,7 @@ while [[ $# -gt 0 ]]; do
     --comet-rpc)              comet_rpc="$2";         shift 2 ;;
     --indexer)                indexer="$2";           shift 2 ;;
     --agent-chain-id)         agent_chain_id="$2";    shift 2 ;;
-    --agent-chain-grpc)       agent_chain_grpc="$2";  shift 2 ;;
+    --agent-chain-rest)       agent_chain_rest="$2";  shift 2 ;;
     --listen-port)            listen_port="$2";       shift 2 ;;
     --public-url)             public_url="$2";        shift 2 ;;
     --operator-key-file)      operator_key_file="$2"; shift 2 ;;
@@ -279,15 +279,16 @@ comet_rpc_url    = "${comet_rpc}"
 indexer_base_url = "${indexer}"
 EOF
   [[ -n "$evm_rpc" ]] && echo "evm_rpc_url      = \"${evm_rpc}\""
-  # A separate chain carrying x/agent + x/agentwallet; unset, the
-  # agent-identity families run against the DEX chain connection.
-  if [[ -n "$agent_chain_id" || -n "$agent_chain_grpc" ]]; then
-    [[ -n "$agent_chain_id" && -n "$agent_chain_grpc" ]] || \
-      fail "--agent-chain-id and --agent-chain-grpc must be set together"
+  # A separate chain carrying x/agent + x/agentwallet, reached over its
+  # Cosmos REST API; unset, the agent-identity families run against the DEX
+  # chain connection.
+  if [[ -n "$agent_chain_id" || -n "$agent_chain_rest" ]]; then
+    [[ -n "$agent_chain_id" && -n "$agent_chain_rest" ]] || \
+      fail "--agent-chain-id and --agent-chain-rest must be set together"
     echo ""
     echo "[agent_chain]"
-    echo "id        = \"${agent_chain_id}\""
-    echo "grpc_addr = \"${agent_chain_grpc}\""
+    echo "id       = \"${agent_chain_id}\""
+    echo "rest_url = \"${agent_chain_rest}\""
   fi
   # Per-protocol contract bindings on the DEX chain's EVM side; each family
   # renders only when configured, mirroring internal/config's optionality.

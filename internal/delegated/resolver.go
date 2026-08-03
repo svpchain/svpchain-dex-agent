@@ -16,6 +16,7 @@ import (
 	"github.com/cosmos/evm/crypto/ethsecp256k1"
 	agenttypes "github.com/dydxprotocol/v4-chain/protocol/x/agent/types"
 	"github.com/svpchain/svpdt"
+	"google.golang.org/grpc"
 
 	"github.com/svpchain/svpchain-dex-agent/internal/agentchain"
 )
@@ -83,15 +84,22 @@ func (r ctxResolver) PublicKeys(agentID string) ([][]byte, error) {
 }
 
 // authKeyClient implements AuthKeyQuerier over cosmos.auth.v1beta1.Query.
+// AuthAccountQuerier is the single cosmos.auth.v1beta1.Query method the
+// resolver needs — the gRPC QueryClient satisfies it, and so does the agent
+// chain's REST client.
+type AuthAccountQuerier interface {
+	Account(ctx context.Context, in *authtypes.QueryAccountRequest, opts ...grpc.CallOption) (*authtypes.QueryAccountResponse, error)
+}
+
 type authKeyClient struct {
-	inner    authtypes.QueryClient
+	inner    AuthAccountQuerier
 	registry codectypes.InterfaceRegistry
 }
 
-// NewAuthKeyClient wires an AuthKeyQuerier from an auth query client and the
-// interface registry needed to unpack the account Any.
+// NewAuthKeyClient wires an AuthKeyQuerier from an auth account querier and
+// the interface registry needed to unpack the account Any.
 func NewAuthKeyClient(
-	inner authtypes.QueryClient,
+	inner AuthAccountQuerier,
 	registry codectypes.InterfaceRegistry,
 ) AuthKeyQuerier {
 	return &authKeyClient{inner: inner, registry: registry}
