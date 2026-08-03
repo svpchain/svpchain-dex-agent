@@ -254,7 +254,6 @@ listen_addr      = "0.0.0.0:${listen_port}"
 public_url       = "${public_url}"
 broadcast_mode   = "server"
 EOF
-  [[ -n "$evm_rpc" ]]    && echo "evm_rpc_url             = \"${evm_rpc}\""
   [[ -n "$faucet_url" ]] && echo "faucet_base_url         = \"${faucet_url}\""
   # Persist per-symbol transfer-out caps on the writable data volume (the
   # config dir holds only read-only mounts) — see render_compose_yaml.
@@ -274,11 +273,14 @@ EOF
   fi
   cat <<EOF
 
-[chain]
+[dex_chain]
 id               = "${chain_id}"
 grpc_addr        = "${grpc_addr}"
 comet_rpc_url    = "${comet_rpc}"
 indexer_base_url = "${indexer}"
+EOF
+  [[ -n "$evm_rpc" ]] && echo "evm_rpc_url      = \"${evm_rpc}\""
+  cat <<EOF
 
 [cache]
 markets_refresh = "${markets_refresh}"

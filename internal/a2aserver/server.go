@@ -75,7 +75,7 @@ func StartFull(ctx context.Context, cfg *config.Config, app *wire.App) error {
 
 	serveErr := make(chan error, 1)
 	go func() {
-		serveErr <- serve(ctx, cfg.ListenAddr, cfg.PublicURL, cfg.Chain.IndexerBaseURL, executor, app.Registry)
+		serveErr <- serve(ctx, cfg.ListenAddr, cfg.PublicURL, cfg.DEXChain.IndexerBaseURL, executor, app.Registry)
 	}()
 
 	// Either half failing takes the whole agent down: a dead markets cache

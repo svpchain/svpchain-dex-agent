@@ -21,34 +21,30 @@ import (
 
 // Config is the agent's configuration.
 type Config struct {
-	Chain      ChainConfig `toml:"chain"`
-	ListenAddr string      `toml:"listen_addr"`
+	DEXChain   DEXChainConfig `toml:"dex_chain"`
+	ListenAddr string         `toml:"listen_addr"`
 
 	// PublicURL is how callers reach this agent, advertised in the Agent Card.
 	// Defaults to "http://localhost"+ListenAddr when empty.
 	PublicURL string `toml:"public_url"`
 
-	// EVMRPCURL is the chain's EVM JSON-RPC endpoint. Optional: when empty the
-	// EVM operation family refuses and non-EVM deployments keep booting.
-	EVMRPCURL string `toml:"evm_rpc_url"`
-
 	// EVMUniswapRouterAddr / EVMWSVPAddr bind the swap operations to a
 	// UniswapV2Router02 deployment and its wrapped-native token. Both-or-
-	// neither; setting either also requires evm_rpc_url.
+	// neither; setting either also requires dex_chain.evm_rpc_url.
 	EVMUniswapRouterAddr string `toml:"evm_uniswap_router_addr"`
 	EVMWSVPAddr          string `toml:"evm_wsvp_addr"`
 
 	// EVMOracleAddr binds get_oracle_price to an AggregatorV3-style feed.
-	// Independent of the swap addresses; requires evm_rpc_url when set.
+	// Independent of the swap addresses; requires dex_chain.evm_rpc_url when set.
 	EVMOracleAddr string `toml:"evm_oracle_addr"`
 
 	// EVMLendoraComptrollerAddr binds the lendora_* operations to a Lendora
-	// (Compound V2 fork) Comptroller. Requires evm_rpc_url when set.
+	// (Compound V2 fork) Comptroller. Requires dex_chain.evm_rpc_url when set.
 	EVMLendoraComptrollerAddr string `toml:"evm_lendora_comptroller_addr"`
 
 	// EVMBridgeAddr / EVMBridgeRoutesPath / EVMBridgeSourceChainID bind
 	// build_bridge_deposit to an SVPBridge deployment. All three together;
-	// setting any also requires evm_rpc_url.
+	// setting any also requires dex_chain.evm_rpc_url.
 	EVMBridgeAddr          string `toml:"evm_bridge_addr"`
 	EVMBridgeRoutesPath    string `toml:"evm_bridge_routes_path"`
 	EVMBridgeSourceChainID uint64 `toml:"evm_bridge_source_chain_id"`
@@ -77,16 +73,20 @@ type Config struct {
 	Operator Operator     `toml:"operator"`
 }
 
-// ChainConfig points the agent at the DEX chain: its cosmos-sdk chain id and
-// the endpoints every chain-facing family shares — queries and broadcast over
-// gRPC, tx status over CometBFT RPC, and reads over the Comlink indexer. All
-// four are required; the chain's optional EVM JSON-RPC stays with the evm_*
-// family it gates.
-type ChainConfig struct {
+// DEXChainConfig points the agent at the DEX chain (an EVM-compatible
+// cosmos-sdk chain): its chain id and the endpoints the chain-facing families
+// share — queries and broadcast over gRPC, tx status over CometBFT RPC, reads
+// over the Comlink indexer, and the chain's EVM JSON-RPC. All but the EVM
+// endpoint are required.
+type DEXChainConfig struct {
 	ID             string `toml:"id"`
 	GrpcAddr       string `toml:"grpc_addr"`
 	CometRPCURL    string `toml:"comet_rpc_url"`
 	IndexerBaseURL string `toml:"indexer_base_url"`
+
+	// EVMRPCURL is the chain's EVM JSON-RPC endpoint. Optional: when empty
+	// the EVM operation family refuses and non-EVM deployments keep booting.
+	EVMRPCURL string `toml:"evm_rpc_url"`
 }
 
 // Operator configures the agent's own on-chain identity: the eth_secp256k1
@@ -189,17 +189,17 @@ func (c *Config) ApplyDefaults() {
 // Validate enforces the required network-level fields and the optional
 // families' invariants.
 func (c *Config) Validate() error {
-	if c.Chain.ID == "" {
-		return fmt.Errorf("chain.id is required")
+	if c.DEXChain.ID == "" {
+		return fmt.Errorf("dex_chain.id is required")
 	}
-	if c.Chain.GrpcAddr == "" {
-		return fmt.Errorf("chain.grpc_addr is required")
+	if c.DEXChain.GrpcAddr == "" {
+		return fmt.Errorf("dex_chain.grpc_addr is required")
 	}
-	if c.Chain.CometRPCURL == "" {
-		return fmt.Errorf("chain.comet_rpc_url is required")
+	if c.DEXChain.CometRPCURL == "" {
+		return fmt.Errorf("dex_chain.comet_rpc_url is required")
 	}
-	if c.Chain.IndexerBaseURL == "" {
-		return fmt.Errorf("chain.indexer_base_url is required")
+	if c.DEXChain.IndexerBaseURL == "" {
+		return fmt.Errorf("dex_chain.indexer_base_url is required")
 	}
 	if c.ListenAddr == "" {
 		return fmt.Errorf("listen_addr is required")
@@ -247,8 +247,8 @@ func (c *Config) validateBridge() error {
 	if !common.IsHexAddress(c.EVMBridgeAddr) {
 		return fmt.Errorf("evm_bridge_addr %q is not a valid 0x address", c.EVMBridgeAddr)
 	}
-	if c.EVMRPCURL == "" {
-		return fmt.Errorf("evm_rpc_url is required when the bridge is configured")
+	if c.DEXChain.EVMRPCURL == "" {
+		return fmt.Errorf("dex_chain.evm_rpc_url is required when the bridge is configured")
 	}
 	return nil
 }
@@ -293,8 +293,8 @@ func (c *Config) validateOracle() error {
 	if !common.IsHexAddress(c.EVMOracleAddr) {
 		return fmt.Errorf("evm_oracle_addr %q is not a valid 0x address", c.EVMOracleAddr)
 	}
-	if c.EVMRPCURL == "" {
-		return fmt.Errorf("evm_rpc_url is required when evm_oracle_addr is set")
+	if c.DEXChain.EVMRPCURL == "" {
+		return fmt.Errorf("dex_chain.evm_rpc_url is required when evm_oracle_addr is set")
 	}
 	return nil
 }
@@ -307,8 +307,8 @@ func (c *Config) validateLendora() error {
 	if !common.IsHexAddress(c.EVMLendoraComptrollerAddr) {
 		return fmt.Errorf("evm_lendora_comptroller_addr %q is not a valid 0x address", c.EVMLendoraComptrollerAddr)
 	}
-	if c.EVMRPCURL == "" {
-		return fmt.Errorf("evm_rpc_url is required when evm_lendora_comptroller_addr is set")
+	if c.DEXChain.EVMRPCURL == "" {
+		return fmt.Errorf("dex_chain.evm_rpc_url is required when evm_lendora_comptroller_addr is set")
 	}
 	return nil
 }
@@ -328,8 +328,8 @@ func (c *Config) validateSwap() error {
 	if !common.IsHexAddress(c.EVMWSVPAddr) {
 		return fmt.Errorf("evm_wsvp_addr %q is not a valid 0x address", c.EVMWSVPAddr)
 	}
-	if c.EVMRPCURL == "" {
-		return fmt.Errorf("evm_rpc_url is required when evm_uniswap_router_addr / evm_wsvp_addr are set")
+	if c.DEXChain.EVMRPCURL == "" {
+		return fmt.Errorf("dex_chain.evm_rpc_url is required when evm_uniswap_router_addr / evm_wsvp_addr are set")
 	}
 	return nil
 }

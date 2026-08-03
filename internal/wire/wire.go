@@ -111,7 +111,7 @@ func (a dynamicTenantAdapter) LookupTenantPolicy(tenantID string) (policy.Tenant
 func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 	logger := log.NewLogger(os.Stderr).With("module", "dex-agent")
 
-	grpcConn, err := chain.Dial(ctx, cfg.Chain.GrpcAddr)
+	grpcConn, err := chain.Dial(ctx, cfg.DEXChain.GrpcAddr)
 	if err != nil {
 		return nil, fmt.Errorf("dial chain gRPC: %w", err)
 	}
@@ -125,19 +125,19 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 		SubaccountQuery: chain.NewSubaccountQueryClient(grpcConn),
 		BankQuery:       chain.NewBankQueryClient(grpcConn),
 	}
-	cometClient, err := chain.NewCometBftClient(cfg.Chain.CometRPCURL)
+	cometClient, err := chain.NewCometBftClient(cfg.DEXChain.CometRPCURL)
 	if err != nil {
 		grpcConn.Close()
 		return nil, fmt.Errorf("cometbft client: %w", err)
 	}
 	chainDeps.CometBft = cometClient
 
-	// EVM is optional: without evm_rpc_url the EVM operations refuse at call
+	// EVM is optional: without dex_chain.evm_rpc_url the EVM operations refuse at call
 	// time (Deps.EVM.Assembler stays nil) and non-EVM deployments boot fine.
 	var evmDeps tools.EVMDeps
 	var lendoraMkts *lendora.Cache
-	if cfg.EVMRPCURL != "" {
-		evmClient, err := chain.NewEVMClient(ctx, cfg.EVMRPCURL)
+	if cfg.DEXChain.EVMRPCURL != "" {
+		evmClient, err := chain.NewEVMClient(ctx, cfg.DEXChain.EVMRPCURL)
 		if err != nil {
 			grpcConn.Close()
 			return nil, fmt.Errorf("evm client: %w", err)
@@ -227,7 +227,7 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 		faucetClient = faucet.NewClient(cfg.FaucetBaseURL, faucet.Options{})
 	}
 
-	idx := indexer.NewClient(cfg.Chain.IndexerBaseURL, indexer.Options{})
+	idx := indexer.NewClient(cfg.DEXChain.IndexerBaseURL, indexer.Options{})
 	mkts := markets.NewCache(chainDeps.ClobQuery, chainDeps.PerpetualsQuery, time.Duration(cfg.Cache.MarketsRefresh), logger)
 
 	limitsCfg := limits.Config{
@@ -263,7 +263,7 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 		Indexer:           idx,
 		Markets:           mkts,
 		LendoraMarkets:    lendoraMkts,
-		Builder:           builder.NewAssembler(cfg.Chain.ID, cfg.Fee.Denom, cfg.Fee.Amount, cfg.Fee.GasLimit),
+		Builder:           builder.NewAssembler(cfg.DEXChain.ID, cfg.Fee.Denom, cfg.Fee.Amount, cfg.Fee.GasLimit),
 		Faucet:            faucetClient,
 		EVM:               evmDeps,
 		Policy:            policyEngine,
@@ -281,7 +281,7 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 		InterfaceRegistry: encCfg.InterfaceRegistry,
 		BroadcastMode:     cfg.BroadcastMode,
 	}
-	handlers := tools.New(cfg.Chain.ID, deps)
+	handlers := tools.New(cfg.DEXChain.ID, deps)
 
 	registry := toolbridge.New(handlers)
 
@@ -305,7 +305,7 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 		delegatedSvc = delegated.New(delegated.Config{
 			Priv:         operatorPriv,
 			Operator:     operatorAddr,
-			ChainID:      cfg.Chain.ID,
+			ChainID:      cfg.DEXChain.ID,
 			Fee:          operator.FeeSpec{Denom: cfg.Fee.Denom, Amount: cfg.Fee.Amount, GasLimit: cfg.Fee.GasLimit},
 			AgentQ:       agentQ,
 			AuthQ:        delegated.NewAuthKeyClient(authtypes.NewQueryClient(grpcConn), encCfg.InterfaceRegistry),

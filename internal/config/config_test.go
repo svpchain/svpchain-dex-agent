@@ -17,14 +17,15 @@ func writeConfig(t *testing.T, body string) string {
 	return path
 }
 
-// Dotted chain.* keys (not a [chain] header) so tests can keep appending
-// top-level keys to this fixture without them landing inside the table.
+// Dotted dex_chain.* keys (not a [dex_chain] header) so tests can keep
+// appending top-level keys to this fixture without them landing inside the
+// table.
 const minimal = `
-chain.id               = "svp-test-1"
-chain.grpc_addr        = "127.0.0.1:9090"
-chain.comet_rpc_url    = "http://127.0.0.1:26657"
-chain.indexer_base_url = "http://127.0.0.1:3002"
-listen_addr            = ":8081"
+dex_chain.id               = "svp-test-1"
+dex_chain.grpc_addr        = "127.0.0.1:9090"
+dex_chain.comet_rpc_url    = "http://127.0.0.1:26657"
+dex_chain.indexer_base_url = "http://127.0.0.1:3002"
+listen_addr                = ":8081"
 `
 
 func TestLoadMinimalAppliesDefaults(t *testing.T) {
@@ -44,7 +45,7 @@ func TestLoadMinimalAppliesDefaults(t *testing.T) {
 }
 
 func TestLoadRejectsMissingRequiredFields(t *testing.T) {
-	for _, missing := range []string{"chain.id", "chain.grpc_addr", "chain.comet_rpc_url", "chain.indexer_base_url", "listen_addr"} {
+	for _, missing := range []string{"dex_chain.id", "dex_chain.grpc_addr", "dex_chain.comet_rpc_url", "dex_chain.indexer_base_url", "listen_addr"} {
 		t.Run(missing, func(t *testing.T) {
 			var body strings.Builder
 			for _, line := range strings.Split(strings.TrimSpace(minimal), "\n") {
@@ -61,7 +62,7 @@ func TestLoadRejectsMissingRequiredFields(t *testing.T) {
 
 func TestSwapAddressesAreBothOrNeither(t *testing.T) {
 	body := minimal + `
-evm_rpc_url             = "http://127.0.0.1:8545"
+dex_chain.evm_rpc_url   = "http://127.0.0.1:8545"
 evm_uniswap_router_addr = "0x0000000000000000000000000000000000000001"
 `
 	if _, err := Load(writeConfig(t, body)); err == nil || !strings.Contains(err.Error(), "must be set together") {
