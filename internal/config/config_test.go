@@ -60,10 +60,28 @@ func TestLoadRejectsMissingRequiredFields(t *testing.T) {
 	}
 }
 
+func TestAgentChainIsBothOrNeither(t *testing.T) {
+	if _, err := Load(writeConfig(t, minimal+`
+agent_chain.grpc_addr = "127.0.0.1:9190"
+`)); err == nil || !strings.Contains(err.Error(), "agent_chain.id") {
+		t.Errorf("grpc_addr without id must fail, got %v", err)
+	}
+	cfg, err := Load(writeConfig(t, minimal+`
+agent_chain.id        = "svpagent-1"
+agent_chain.grpc_addr = "127.0.0.1:9190"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.AgentChain.Enabled() {
+		t.Error("agent chain should report enabled when configured")
+	}
+}
+
 func TestSwapAddressesAreBothOrNeither(t *testing.T) {
 	body := minimal + `
-dex_chain.evm_rpc_url   = "http://127.0.0.1:8545"
-evm_uniswap_router_addr = "0x0000000000000000000000000000000000000001"
+dex_chain.evm_rpc_url        = "http://127.0.0.1:8545"
+evm.swap.uniswap_router_addr = "0x0000000000000000000000000000000000000001"
 `
 	if _, err := Load(writeConfig(t, body)); err == nil || !strings.Contains(err.Error(), "must be set together") {
 		t.Errorf("router without wsvp must fail, got %v", err)
@@ -72,7 +90,7 @@ evm_uniswap_router_addr = "0x0000000000000000000000000000000000000001"
 
 func TestBridgeRequiresAllThreeAndEVMRPC(t *testing.T) {
 	body := minimal + `
-evm_bridge_addr = "0x0000000000000000000000000000000000000002"
+evm.bridge.addr = "0x0000000000000000000000000000000000000002"
 `
 	if _, err := Load(writeConfig(t, body)); err == nil || !strings.Contains(err.Error(), "set together") {
 		t.Errorf("partial bridge config must fail, got %v", err)
@@ -81,7 +99,7 @@ evm_bridge_addr = "0x0000000000000000000000000000000000000002"
 
 func TestForeignChainRequiresHomeBridge(t *testing.T) {
 	body := minimal + `
-[[evm_foreign_chain]]
+[[evm.bridge.foreign_chain]]
 chain_id    = 421614
 rpc_url     = "http://foreign:8545"
 bridge_addr = "0x0000000000000000000000000000000000000003"

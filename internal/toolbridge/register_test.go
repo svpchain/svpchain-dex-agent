@@ -57,6 +57,7 @@ var expectedChainOps = map[string][]string{
 	SkillAgentRegistry: {
 		"get_agent", "get_agent_by_operator", "list_agents", "get_agents_by_owner",
 		"get_agents_by_capability", "get_agent_params",
+		"broadcast_agent_chain_tx",
 		"build_register_agent", "build_update_agent", "build_deposit_bond",
 		"build_withdraw_bond", "build_deregister_agent",
 	},
@@ -70,7 +71,7 @@ var expectedChainOps = map[string][]string{
 
 func TestChainRegistrationCoversEveryExpectedOp(t *testing.T) {
 	r := New(&tools.Handlers{})
-	r.RegisterAgentChain(agentchain.New(nil, nil, nil, nil, nil))
+	r.RegisterAgentChain(agentchain.New(nil, nil, nil, nil, nil, nil, nil))
 
 	for skill, toolNames := range expectedChainOps {
 		for _, tool := range toolNames {

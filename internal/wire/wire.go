@@ -54,7 +54,11 @@ type App struct {
 	Sessions *auth.SessionBearers
 	Indexer  *indexer.Client
 	GrpcConn *grpc.ClientConn
-	Logger   log.Logger
+
+	// AgentGrpcConn is the separate [agent_chain] connection; nil when the
+	// agent-identity families share the DEX chain connection.
+	AgentGrpcConn *grpc.ClientConn
+	Logger        log.Logger
 
 	// Delegated is the execution service (nil when keyless). Exposed so the
 	// server layer can hand it the served agent-card bytes — the capability
@@ -66,6 +70,9 @@ type App struct {
 func (a *App) Close() {
 	if a.GrpcConn != nil {
 		_ = a.GrpcConn.Close()
+	}
+	if a.AgentGrpcConn != nil {
+		_ = a.AgentGrpcConn.Close()
 	}
 }
 
@@ -145,10 +152,10 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 		chainDeps.EVM = evmClient
 		evmDeps = tools.EVMDeps{Assembler: builder.NewEVMAssembler(evmClient)}
 
-		if cfg.EVMUniswapRouterAddr != "" {
+		if cfg.EVM.Swap.UniswapRouterAddr != "" {
 			uni, err := builder.NewUniswapV2(
-				common.HexToAddress(cfg.EVMUniswapRouterAddr),
-				common.HexToAddress(cfg.EVMWSVPAddr),
+				common.HexToAddress(cfg.EVM.Swap.UniswapRouterAddr),
+				common.HexToAddress(cfg.EVM.Swap.WSVPAddr),
 			)
 			if err != nil {
 				grpcConn.Close()
@@ -156,16 +163,16 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 			}
 			evmDeps.Uniswap = uni
 		}
-		if cfg.EVMOracleAddr != "" {
-			oracle, err := builder.NewOracleFeed(common.HexToAddress(cfg.EVMOracleAddr))
+		if cfg.EVM.Oracle.FeedAddr != "" {
+			oracle, err := builder.NewOracleFeed(common.HexToAddress(cfg.EVM.Oracle.FeedAddr))
 			if err != nil {
 				grpcConn.Close()
 				return nil, fmt.Errorf("oracle feed binding: %w", err)
 			}
 			evmDeps.Oracle = oracle
 		}
-		if cfg.EVMLendoraComptrollerAddr != "" {
-			lend, err := builder.NewLendora(common.HexToAddress(cfg.EVMLendoraComptrollerAddr))
+		if cfg.EVM.Lendora.ComptrollerAddr != "" {
+			lend, err := builder.NewLendora(common.HexToAddress(cfg.EVM.Lendora.ComptrollerAddr))
 			if err != nil {
 				grpcConn.Close()
 				return nil, fmt.Errorf("lendora binding: %w", err)
@@ -173,33 +180,33 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 			evmDeps.Lendora = lend
 			lendoraMkts = lendora.NewCache(evmClient, lend, time.Duration(cfg.Cache.MarketsRefresh), logger)
 		}
-		if cfg.EVMBridgeAddr != "" {
-			br, err := builder.NewBridge(common.HexToAddress(cfg.EVMBridgeAddr))
+		if cfg.EVM.Bridge.Addr != "" {
+			br, err := builder.NewBridge(common.HexToAddress(cfg.EVM.Bridge.Addr))
 			if err != nil {
 				grpcConn.Close()
 				return nil, fmt.Errorf("bridge binding: %w", err)
 			}
-			routes, err := bridge.LoadRegistry(cfg.EVMBridgeRoutesPath)
+			routes, err := bridge.LoadRegistry(cfg.EVM.Bridge.RoutesPath)
 			if err != nil {
 				grpcConn.Close()
 				return nil, fmt.Errorf("bridge routes: %w", err)
 			}
-			if !routes.HasSource(cfg.EVMBridgeSourceChainID) {
+			if !routes.HasSource(cfg.EVM.Bridge.SourceChainID) {
 				grpcConn.Close()
-				return nil, fmt.Errorf("bridge routes %s has no routes originating from evm_bridge_source_chain_id %d",
-					cfg.EVMBridgeRoutesPath, cfg.EVMBridgeSourceChainID)
+				return nil, fmt.Errorf("bridge routes %s has no routes originating from evm.bridge.source_chain_id %d",
+					cfg.EVM.Bridge.RoutesPath, cfg.EVM.Bridge.SourceChainID)
 			}
 			evmDeps.Bridge = br
 			evmDeps.BridgeRoutes = routes
-			evmDeps.BridgeSourceChainID = cfg.EVMBridgeSourceChainID
-			evmDeps.HomeChainID = cfg.EVMBridgeSourceChainID
+			evmDeps.BridgeSourceChainID = cfg.EVM.Bridge.SourceChainID
+			evmDeps.HomeChainID = cfg.EVM.Bridge.SourceChainID
 
-			if len(cfg.EVMForeignChains) > 0 {
-				foreign := make(map[uint64]*tools.ForeignChain, len(cfg.EVMForeignChains))
-				for _, fc := range cfg.EVMForeignChains {
-					if _, err := routes.ResolveSourceChain(strconv.FormatUint(fc.ChainID, 10), cfg.EVMBridgeSourceChainID); err != nil {
+			if len(cfg.EVM.Bridge.ForeignChains) > 0 {
+				foreign := make(map[uint64]*tools.ForeignChain, len(cfg.EVM.Bridge.ForeignChains))
+				for _, fc := range cfg.EVM.Bridge.ForeignChains {
+					if _, err := routes.ResolveSourceChain(strconv.FormatUint(fc.ChainID, 10), cfg.EVM.Bridge.SourceChainID); err != nil {
 						grpcConn.Close()
-						return nil, fmt.Errorf("evm_foreign_chain %d: %w", fc.ChainID, err)
+						return nil, fmt.Errorf("evm.bridge.foreign_chain %d: %w", fc.ChainID, err)
 					}
 					fbr, err := builder.NewBridge(common.HexToAddress(fc.BridgeAddr))
 					if err != nil {
@@ -285,11 +292,32 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 
 	registry := toolbridge.New(handlers)
 
-	// x/agent + x/agentwallet: query clients on the same gRPC conn, tx builds
-	// through the same assembler and policy engine the MCP builders use.
-	agentQ := agenttypes.NewQueryClient(grpcConn)
-	walletQ := wallettypes.NewQueryClient(grpcConn)
-	agentSvc := agentchain.New(agentQ, walletQ, deps.Builder, chainDeps.Account, policyEngine)
+	// The agent-identity families — x/agent registry, x/agentwallet
+	// delegation, delegated execution — run against the chain that carries
+	// those modules. By default that is the DEX chain itself; a configured
+	// [agent_chain] dials its own connection, and everything below (queries,
+	// tx builds, the operator's signing and broadcast) follows it.
+	agentConn := grpcConn
+	agentChainID := cfg.DEXChain.ID
+	agentAccount := chainDeps.Account
+	agentBroadcast := chainDeps.Broadcast
+	var agentGrpcConn *grpc.ClientConn
+	if cfg.AgentChain.Enabled() {
+		agentGrpcConn, err = chain.Dial(ctx, cfg.AgentChain.GrpcAddr)
+		if err != nil {
+			grpcConn.Close()
+			return nil, fmt.Errorf("dial agent chain gRPC: %w", err)
+		}
+		agentConn = agentGrpcConn
+		agentChainID = cfg.AgentChain.ID
+		agentAccount = chain.NewAccountClient(agentGrpcConn, encCfg.InterfaceRegistry)
+		agentBroadcast = chain.NewBroadcastClient(agentGrpcConn)
+		logger.Info("agent chain configured", "chain_id", agentChainID, "grpc", cfg.AgentChain.GrpcAddr)
+	}
+	agentQ := agenttypes.NewQueryClient(agentConn)
+	walletQ := wallettypes.NewQueryClient(agentConn)
+	agentAsm := builder.NewAssembler(agentChainID, cfg.Fee.Denom, cfg.Fee.Amount, cfg.Fee.GasLimit)
+	agentSvc := agentchain.New(agentQ, walletQ, agentAsm, agentAccount, policyEngine, agentBroadcast, encCfg.InterfaceRegistry)
 	registry.RegisterAgentChain(agentSvc)
 
 	// Delegated execution goes live only when an operator key is configured;
@@ -298,6 +326,9 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 	operatorPriv, operatorAddr, err := operator.Load(cfg.Operator)
 	if err != nil {
 		grpcConn.Close()
+		if agentGrpcConn != nil {
+			agentGrpcConn.Close()
+		}
 		return nil, err
 	}
 	var delegatedSvc *delegated.Service
@@ -305,14 +336,14 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 		delegatedSvc = delegated.New(delegated.Config{
 			Priv:         operatorPriv,
 			Operator:     operatorAddr,
-			ChainID:      cfg.DEXChain.ID,
+			ChainID:      agentChainID,
 			Fee:          operator.FeeSpec{Denom: cfg.Fee.Denom, Amount: cfg.Fee.Amount, GasLimit: cfg.Fee.GasLimit},
 			AgentQ:       agentQ,
-			AuthQ:        delegated.NewAuthKeyClient(authtypes.NewQueryClient(grpcConn), encCfg.InterfaceRegistry),
+			AuthQ:        delegated.NewAuthKeyClient(authtypes.NewQueryClient(agentConn), encCfg.InterfaceRegistry),
 			WalletQ:      walletQ,
 			Markets:      mkts,
-			Account:      chainDeps.Account,
-			Broadcast:    chainDeps.Broadcast,
+			Account:      agentAccount,
+			Broadcast:    agentBroadcast,
 			Policy:       policyEngine,
 			Endpoint:     cfg.PublicURL,
 			Capabilities: cfg.Operator.Capabilities,
@@ -323,15 +354,16 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 	registry.RegisterExecution(delegatedSvc)
 
 	return &App{
-		Handlers:  handlers,
-		Registry:  registry,
-		Markets:   mkts,
-		Lendora:   lendoraMkts,
-		Tenants:   dynamicTenants,
-		Sessions:  sessionBearers,
-		Indexer:   idx,
-		GrpcConn:  grpcConn,
-		Delegated: delegatedSvc,
-		Logger:    logger,
+		Handlers:      handlers,
+		Registry:      registry,
+		Markets:       mkts,
+		Lendora:       lendoraMkts,
+		Tenants:       dynamicTenants,
+		Sessions:      sessionBearers,
+		Indexer:       idx,
+		GrpcConn:      grpcConn,
+		AgentGrpcConn: agentGrpcConn,
+		Delegated:     delegatedSvc,
+		Logger:        logger,
 	}, nil
 }

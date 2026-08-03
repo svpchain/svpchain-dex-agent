@@ -15,6 +15,7 @@ import (
 	"fmt"
 
 	sdkmath "cosmossdk.io/math"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"google.golang.org/grpc"
 
@@ -49,16 +50,21 @@ type WalletQuerier interface {
 
 // Service answers agent-registry and delegation operations.
 type Service struct {
-	agentQ  AgentQuerier
-	walletQ WalletQuerier
-	asm     *builder.Assembler
-	account chain.AccountClient
-	policy  *policy.Engine
+	agentQ    AgentQuerier
+	walletQ   WalletQuerier
+	asm       *builder.Assembler
+	account   chain.AccountClient
+	policy    *policy.Engine
+	broadcast chain.BroadcastClient
+	registry  codectypes.InterfaceRegistry
 }
 
-// New wires the service. asm and account may be nil in query-only tests.
-func New(agentQ AgentQuerier, walletQ WalletQuerier, asm *builder.Assembler, account chain.AccountClient, engine *policy.Engine) *Service {
-	return &Service{agentQ: agentQ, walletQ: walletQ, asm: asm, account: account, policy: engine}
+// New wires the service. asm, account, broadcast, and registry may be nil in
+// query-only tests. broadcast/registry back broadcast_agent_chain_tx — the
+// landing rail for caller-signed registry/delegation txs, which must reach
+// the agent chain rather than wherever broadcast_signed_tx points.
+func New(agentQ AgentQuerier, walletQ WalletQuerier, asm *builder.Assembler, account chain.AccountClient, engine *policy.Engine, broadcast chain.BroadcastClient, registry codectypes.InterfaceRegistry) *Service {
+	return &Service{agentQ: agentQ, walletQ: walletQ, asm: asm, account: account, policy: engine, broadcast: broadcast, registry: registry}
 }
 
 // authorize is the tenant prelude every operation runs, mirroring the MCP

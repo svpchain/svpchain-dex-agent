@@ -66,6 +66,16 @@ AnteHandler. Wrapped short-term orders ride the chain's gas-free route.
 Requires an `[operator]` key. `agent_self_register` (gated to the operator
 itself) registers the agent on chain with `agent_id = did:svp:<operator>`.
 
+**Agent chain.** By default the DEX chain itself carries `x/agent` +
+`x/agentwallet`. When it doesn't, an optional `[agent_chain]` section
+(`id`, `grpc_addr`) points the agent-identity families — registry and
+delegation queries/builds, self-registration, and delegated execution — at
+the chain that does. Caller-signed registry/delegation txs then land via
+`broadcast_agent_chain_tx` (registered under the agent-registry skill), since
+`broadcast_signed_tx` targets the DEX chain. Note delegated orders execute on
+whichever chain verifies the delegation, so a split deployment trades against
+the agent chain's CLOB.
+
 ## Running
 
 Full mode:

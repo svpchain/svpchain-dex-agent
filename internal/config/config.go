@@ -21,37 +21,18 @@ import (
 
 // Config is the agent's configuration.
 type Config struct {
-	DEXChain   DEXChainConfig `toml:"dex_chain"`
-	ListenAddr string         `toml:"listen_addr"`
+	DEXChain   DEXChainConfig   `toml:"dex_chain"`
+	AgentChain AgentChainConfig `toml:"agent_chain"`
+	ListenAddr string           `toml:"listen_addr"`
 
 	// PublicURL is how callers reach this agent, advertised in the Agent Card.
 	// Defaults to "http://localhost"+ListenAddr when empty.
 	PublicURL string `toml:"public_url"`
 
-	// EVMUniswapRouterAddr / EVMWSVPAddr bind the swap operations to a
-	// UniswapV2Router02 deployment and its wrapped-native token. Both-or-
-	// neither; setting either also requires dex_chain.evm_rpc_url.
-	EVMUniswapRouterAddr string `toml:"evm_uniswap_router_addr"`
-	EVMWSVPAddr          string `toml:"evm_wsvp_addr"`
-
-	// EVMOracleAddr binds get_oracle_price to an AggregatorV3-style feed.
-	// Independent of the swap addresses; requires dex_chain.evm_rpc_url when set.
-	EVMOracleAddr string `toml:"evm_oracle_addr"`
-
-	// EVMLendoraComptrollerAddr binds the lendora_* operations to a Lendora
-	// (Compound V2 fork) Comptroller. Requires dex_chain.evm_rpc_url when set.
-	EVMLendoraComptrollerAddr string `toml:"evm_lendora_comptroller_addr"`
-
-	// EVMBridgeAddr / EVMBridgeRoutesPath / EVMBridgeSourceChainID bind
-	// build_bridge_deposit to an SVPBridge deployment. All three together;
-	// setting any also requires dex_chain.evm_rpc_url.
-	EVMBridgeAddr          string `toml:"evm_bridge_addr"`
-	EVMBridgeRoutesPath    string `toml:"evm_bridge_routes_path"`
-	EVMBridgeSourceChainID uint64 `toml:"evm_bridge_source_chain_id"`
-
-	// EVMForeignChains declares the foreign EVM chains that can bridge INTO
-	// svpchain, backing build_bridge_deposit_inbound. Requires the home bridge.
-	EVMForeignChains []EVMForeignChain `toml:"evm_foreign_chain"`
+	// EVM binds the optional EVM operation families to their contract
+	// deployments on the DEX chain. Every configured family requires
+	// dex_chain.evm_rpc_url.
+	EVM EVMConfig `toml:"evm"`
 
 	// FaucetBaseURL is the faucet backend's HTTP base URL. Optional: when
 	// empty the faucet operations refuse.
@@ -87,6 +68,60 @@ type DEXChainConfig struct {
 	// EVMRPCURL is the chain's EVM JSON-RPC endpoint. Optional: when empty
 	// the EVM operation family refuses and non-EVM deployments keep booting.
 	EVMRPCURL string `toml:"evm_rpc_url"`
+}
+
+// AgentChainConfig points the agent-identity families — x/agent registry,
+// x/agentwallet delegation, and delegated execution — at the chain carrying
+// those modules when it is not the DEX chain itself. Optional: unset, those
+// families run against the DEX chain connection (the single-chain default).
+// Note delegated orders execute on whichever chain verifies the delegation,
+// so a split deployment trades against the agent chain's CLOB.
+type AgentChainConfig struct {
+	ID       string `toml:"id"`
+	GrpcAddr string `toml:"grpc_addr"`
+}
+
+// Enabled reports whether a separate agent chain is configured.
+func (a AgentChainConfig) Enabled() bool { return a.GrpcAddr != "" }
+
+// EVMConfig holds the per-protocol contract bindings on the DEX chain's EVM
+// side. Each subtable is an independent optional family: left empty, its
+// operations refuse at call time with a reason and the agent still boots.
+type EVMConfig struct {
+	Swap    SwapConfig    `toml:"swap"`
+	Oracle  OracleConfig  `toml:"oracle"`
+	Lendora LendoraConfig `toml:"lendora"`
+	Bridge  BridgeConfig  `toml:"bridge"`
+}
+
+// SwapConfig binds the swap operations to a UniswapV2Router02 deployment and
+// its wrapped-native token. Both-or-neither.
+type SwapConfig struct {
+	UniswapRouterAddr string `toml:"uniswap_router_addr"`
+	WSVPAddr          string `toml:"wsvp_addr"`
+}
+
+// OracleConfig binds get_oracle_price to an AggregatorV3-style feed.
+type OracleConfig struct {
+	FeedAddr string `toml:"feed_addr"`
+}
+
+// LendoraConfig binds the lendora_* operations to a Lendora (Compound V2
+// fork) Comptroller.
+type LendoraConfig struct {
+	ComptrollerAddr string `toml:"comptroller_addr"`
+}
+
+// BridgeConfig binds build_bridge_deposit to an SVPBridge deployment: the
+// contract address, the route whitelist, and the DEX chain's own EVM chain
+// id — all three together. ForeignChains declares the foreign EVM chains
+// that can bridge INTO svpchain, backing build_bridge_deposit_inbound; they
+// require the home bridge.
+type BridgeConfig struct {
+	Addr          string            `toml:"addr"`
+	RoutesPath    string            `toml:"routes_path"`
+	SourceChainID uint64            `toml:"source_chain_id"`
+	ForeignChains []EVMForeignChain `toml:"foreign_chain"`
 }
 
 // Operator configures the agent's own on-chain identity: the eth_secp256k1
@@ -160,8 +195,8 @@ func Load(path string) (*Config, error) {
 	// Relative paths resolve against the config file's own directory, so the
 	// "routes.json next to agent.toml" layout works regardless of where the
 	// agent is launched from.
-	if c.EVMBridgeRoutesPath != "" && !filepath.IsAbs(c.EVMBridgeRoutesPath) {
-		c.EVMBridgeRoutesPath = filepath.Join(filepath.Dir(path), c.EVMBridgeRoutesPath)
+	if c.EVM.Bridge.RoutesPath != "" && !filepath.IsAbs(c.EVM.Bridge.RoutesPath) {
+		c.EVM.Bridge.RoutesPath = filepath.Join(filepath.Dir(path), c.EVM.Bridge.RoutesPath)
 	}
 	if c.TransferOutCapPath != "" && !filepath.IsAbs(c.TransferOutCapPath) {
 		c.TransferOutCapPath = filepath.Join(filepath.Dir(path), c.TransferOutCapPath)
@@ -204,6 +239,9 @@ func (c *Config) Validate() error {
 	if c.ListenAddr == "" {
 		return fmt.Errorf("listen_addr is required")
 	}
+	if (c.AgentChain.ID == "") != (c.AgentChain.GrpcAddr == "") {
+		return fmt.Errorf("agent_chain.id and agent_chain.grpc_addr must be set together")
+	}
 	if err := c.Fee.validate(); err != nil {
 		return err
 	}
@@ -229,23 +267,23 @@ func (c *Config) Validate() error {
 // all-or-nothing; the family requires an EVM RPC endpoint.
 func (c *Config) validateBridge() error {
 	set := 0
-	if c.EVMBridgeAddr != "" {
+	if c.EVM.Bridge.Addr != "" {
 		set++
 	}
-	if c.EVMBridgeRoutesPath != "" {
+	if c.EVM.Bridge.RoutesPath != "" {
 		set++
 	}
-	if c.EVMBridgeSourceChainID != 0 {
+	if c.EVM.Bridge.SourceChainID != 0 {
 		set++
 	}
 	if set == 0 {
 		return nil
 	}
 	if set != 3 {
-		return fmt.Errorf("evm_bridge_addr, evm_bridge_routes_path and evm_bridge_source_chain_id must be set together")
+		return fmt.Errorf("evm.bridge.addr, evm.bridge.routes_path and evm.bridge.source_chain_id must be set together")
 	}
-	if !common.IsHexAddress(c.EVMBridgeAddr) {
-		return fmt.Errorf("evm_bridge_addr %q is not a valid 0x address", c.EVMBridgeAddr)
+	if !common.IsHexAddress(c.EVM.Bridge.Addr) {
+		return fmt.Errorf("evm.bridge.addr %q is not a valid 0x address", c.EVM.Bridge.Addr)
 	}
 	if c.DEXChain.EVMRPCURL == "" {
 		return fmt.Errorf("dex_chain.evm_rpc_url is required when the bridge is configured")
@@ -257,29 +295,29 @@ func (c *Config) validateBridge() error {
 // and a valid bridge address; ids must be unique and distinct from the home
 // chain; any foreign chain requires the home bridge.
 func (c *Config) validateForeignChains() error {
-	if len(c.EVMForeignChains) == 0 {
+	if len(c.EVM.Bridge.ForeignChains) == 0 {
 		return nil
 	}
-	if c.EVMBridgeAddr == "" {
-		return fmt.Errorf("evm_foreign_chain requires the bridge to be configured (evm_bridge_addr, evm_bridge_routes_path, evm_bridge_source_chain_id)")
+	if c.EVM.Bridge.Addr == "" {
+		return fmt.Errorf("evm.bridge.foreign_chain requires the bridge to be configured (evm.bridge.addr, evm.bridge.routes_path, evm.bridge.source_chain_id)")
 	}
 	seen := map[uint64]bool{}
-	for i, fc := range c.EVMForeignChains {
+	for i, fc := range c.EVM.Bridge.ForeignChains {
 		if fc.ChainID == 0 {
-			return fmt.Errorf("evm_foreign_chain[%d] chain_id is required", i)
+			return fmt.Errorf("evm.bridge.foreign_chain[%d] chain_id is required", i)
 		}
-		if fc.ChainID == c.EVMBridgeSourceChainID {
-			return fmt.Errorf("evm_foreign_chain[%d] chain_id %d is the home chain (evm_bridge_source_chain_id)", i, fc.ChainID)
+		if fc.ChainID == c.EVM.Bridge.SourceChainID {
+			return fmt.Errorf("evm.bridge.foreign_chain[%d] chain_id %d is the home chain (evm.bridge.source_chain_id)", i, fc.ChainID)
 		}
 		if seen[fc.ChainID] {
-			return fmt.Errorf("evm_foreign_chain[%d] chain_id %d is declared more than once", i, fc.ChainID)
+			return fmt.Errorf("evm.bridge.foreign_chain[%d] chain_id %d is declared more than once", i, fc.ChainID)
 		}
 		seen[fc.ChainID] = true
 		if fc.RPCURL == "" {
-			return fmt.Errorf("evm_foreign_chain[%d] (chain_id %d) rpc_url is required", i, fc.ChainID)
+			return fmt.Errorf("evm.bridge.foreign_chain[%d] (chain_id %d) rpc_url is required", i, fc.ChainID)
 		}
 		if !common.IsHexAddress(fc.BridgeAddr) {
-			return fmt.Errorf("evm_foreign_chain[%d] (chain_id %d) bridge_addr %q is not a valid 0x address", i, fc.ChainID, fc.BridgeAddr)
+			return fmt.Errorf("evm.bridge.foreign_chain[%d] (chain_id %d) bridge_addr %q is not a valid 0x address", i, fc.ChainID, fc.BridgeAddr)
 		}
 	}
 	return nil
@@ -287,28 +325,28 @@ func (c *Config) validateForeignChains() error {
 
 // validateOracle: valid 0x address when set; requires an EVM RPC endpoint.
 func (c *Config) validateOracle() error {
-	if c.EVMOracleAddr == "" {
+	if c.EVM.Oracle.FeedAddr == "" {
 		return nil
 	}
-	if !common.IsHexAddress(c.EVMOracleAddr) {
-		return fmt.Errorf("evm_oracle_addr %q is not a valid 0x address", c.EVMOracleAddr)
+	if !common.IsHexAddress(c.EVM.Oracle.FeedAddr) {
+		return fmt.Errorf("evm.oracle.feed_addr %q is not a valid 0x address", c.EVM.Oracle.FeedAddr)
 	}
 	if c.DEXChain.EVMRPCURL == "" {
-		return fmt.Errorf("dex_chain.evm_rpc_url is required when evm_oracle_addr is set")
+		return fmt.Errorf("dex_chain.evm_rpc_url is required when evm.oracle.feed_addr is set")
 	}
 	return nil
 }
 
 // validateLendora: valid 0x address when set; requires an EVM RPC endpoint.
 func (c *Config) validateLendora() error {
-	if c.EVMLendoraComptrollerAddr == "" {
+	if c.EVM.Lendora.ComptrollerAddr == "" {
 		return nil
 	}
-	if !common.IsHexAddress(c.EVMLendoraComptrollerAddr) {
-		return fmt.Errorf("evm_lendora_comptroller_addr %q is not a valid 0x address", c.EVMLendoraComptrollerAddr)
+	if !common.IsHexAddress(c.EVM.Lendora.ComptrollerAddr) {
+		return fmt.Errorf("evm.lendora.comptroller_addr %q is not a valid 0x address", c.EVM.Lendora.ComptrollerAddr)
 	}
 	if c.DEXChain.EVMRPCURL == "" {
-		return fmt.Errorf("dex_chain.evm_rpc_url is required when evm_lendora_comptroller_addr is set")
+		return fmt.Errorf("dex_chain.evm_rpc_url is required when evm.lendora.comptroller_addr is set")
 	}
 	return nil
 }
@@ -316,20 +354,20 @@ func (c *Config) validateLendora() error {
 // validateSwap: router + WSVP both-or-neither, valid 0x addresses, require
 // an EVM RPC endpoint.
 func (c *Config) validateSwap() error {
-	if c.EVMUniswapRouterAddr == "" && c.EVMWSVPAddr == "" {
+	if c.EVM.Swap.UniswapRouterAddr == "" && c.EVM.Swap.WSVPAddr == "" {
 		return nil
 	}
-	if c.EVMUniswapRouterAddr == "" || c.EVMWSVPAddr == "" {
-		return fmt.Errorf("evm_uniswap_router_addr and evm_wsvp_addr must be set together")
+	if c.EVM.Swap.UniswapRouterAddr == "" || c.EVM.Swap.WSVPAddr == "" {
+		return fmt.Errorf("evm.swap.uniswap_router_addr and evm.swap.wsvp_addr must be set together")
 	}
-	if !common.IsHexAddress(c.EVMUniswapRouterAddr) {
-		return fmt.Errorf("evm_uniswap_router_addr %q is not a valid 0x address", c.EVMUniswapRouterAddr)
+	if !common.IsHexAddress(c.EVM.Swap.UniswapRouterAddr) {
+		return fmt.Errorf("evm.swap.uniswap_router_addr %q is not a valid 0x address", c.EVM.Swap.UniswapRouterAddr)
 	}
-	if !common.IsHexAddress(c.EVMWSVPAddr) {
-		return fmt.Errorf("evm_wsvp_addr %q is not a valid 0x address", c.EVMWSVPAddr)
+	if !common.IsHexAddress(c.EVM.Swap.WSVPAddr) {
+		return fmt.Errorf("evm.swap.wsvp_addr %q is not a valid 0x address", c.EVM.Swap.WSVPAddr)
 	}
 	if c.DEXChain.EVMRPCURL == "" {
-		return fmt.Errorf("dex_chain.evm_rpc_url is required when evm_uniswap_router_addr / evm_wsvp_addr are set")
+		return fmt.Errorf("dex_chain.evm_rpc_url is required when evm.swap addresses are set")
 	}
 	return nil
 }

@@ -90,7 +90,7 @@ func newTestService() (*Service, *fakeAgentQ, *fakeWalletQ) {
 		Owner:    testOwner,
 	}})
 	asm := builder.NewAssembler("test-chain", "asvp", "25000000000000000", 1_000_000)
-	return New(aq, wq, asm, fakeAccount{}, engine), aq, wq
+	return New(aq, wq, asm, fakeAccount{}, engine, nil, nil), aq, wq
 }
 
 func authedCtx() context.Context {

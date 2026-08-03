@@ -16,6 +16,11 @@ func (r *Registry) RegisterAgentChain(s *agentchain.Service) {
 	r.add(SkillAgentRegistry, "get_agents_by_capability", adaptNative(s.GetAgentsByCapability))
 	r.add(SkillAgentRegistry, "get_agent_params", adaptNative(s.GetAgentParams))
 
+	// Landing rail for the caller-signed builds below: broadcasts to the
+	// agent chain, which a split deployment separates from the DEX chain
+	// that broadcast_signed_tx targets.
+	r.add(SkillAgentRegistry, "broadcast_agent_chain_tx", adaptNative(s.BroadcastSignedTx))
+
 	// x/agent lifecycle builds (owner signs).
 	r.add(SkillAgentRegistry, "build_register_agent", adaptNative(s.BuildRegisterAgent))
 	r.add(SkillAgentRegistry, "build_update_agent", adaptNative(s.BuildUpdateAgent))
