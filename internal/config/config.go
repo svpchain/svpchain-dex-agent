@@ -91,10 +91,6 @@ type Operator struct {
 	// deployments can inject the key without touching disk.
 	KeyFile string `toml:"key_file"`
 
-	// Endpoint is the public A2A base URL advertised on chain in
-	// MsgRegisterAgent. Defaults to public_url when empty.
-	Endpoint string `toml:"endpoint"`
-
 	// Capabilities are the capability strings registered on chain.
 	Capabilities []string `toml:"capabilities"`
 
@@ -177,9 +173,6 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.PublicURL == "" && c.ListenAddr != "" {
 		c.PublicURL = "http://localhost" + c.ListenAddr
-	}
-	if c.Operator.Endpoint == "" {
-		c.Operator.Endpoint = c.PublicURL
 	}
 	c.Fee.applyDefaults()
 }

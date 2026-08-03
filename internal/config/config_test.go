@@ -39,9 +39,6 @@ func TestLoadMinimalAppliesDefaults(t *testing.T) {
 	if cfg.PublicURL != "http://localhost:8081" {
 		t.Errorf("public_url default not derived from listen_addr: %q", cfg.PublicURL)
 	}
-	if cfg.Operator.Endpoint != cfg.PublicURL {
-		t.Errorf("operator endpoint should default to public_url, got %q", cfg.Operator.Endpoint)
-	}
 }
 
 func TestLoadRejectsMissingRequiredFields(t *testing.T) {

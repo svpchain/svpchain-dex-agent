@@ -45,8 +45,6 @@
 #                                  the svpchain-execution skill ON. Unset → the
 #                                  agent runs keyless and execution refuses with
 #                                  a reason. SVPCHAIN_AGENT_OPERATOR_KEY_FILE
-#   --operator-endpoint <url>      Endpoint registered on chain by
-#                                  agent_self_register. Default: --public-url.
 #   --operator-capabilities <l>    Comma-separated capability tags for
 #                                  registration. Default "trading".
 #   --operator-metadata <s>        Free-form registration metadata. Default "".
@@ -126,7 +124,6 @@ indexer="${SVPCHAIN_INDEXER:-http://127.0.0.1:3002}"
 listen_port="${SVPCHAIN_AGENT_LISTEN_PORT:-8081}"
 public_url="${SVPCHAIN_AGENT_PUBLIC_URL:-https://agent-testnet.svpchain.org}"
 operator_key_file="${SVPCHAIN_AGENT_OPERATOR_KEY_FILE:-}"
-operator_endpoint=""
 operator_capabilities="trading"
 operator_metadata=""
 evm_rpc="${SVPCHAIN_EVM_RPC:-http://127.0.0.1:8545}"
@@ -165,7 +162,6 @@ while [[ $# -gt 0 ]]; do
     --listen-port)            listen_port="$2";       shift 2 ;;
     --public-url)             public_url="$2";        shift 2 ;;
     --operator-key-file)      operator_key_file="$2"; shift 2 ;;
-    --operator-endpoint)      operator_endpoint="$2"; shift 2 ;;
     --operator-capabilities)  operator_capabilities="$2"; shift 2 ;;
     --operator-metadata)      operator_metadata="$2"; shift 2 ;;
     --evm-rpc)                evm_rpc="$2";           shift 2 ;;
@@ -205,10 +201,6 @@ done
 # Strip a trailing slash (from the flag or env) so the card's
 # "<public_url>/invoke" join stays clean.
 public_url="${public_url%/}"
-
-# operator_endpoint defaults to the public URL (what agent_self_register
-# advertises on chain).
-: "${operator_endpoint:=$public_url}"
 
 # ---- shared helpers -------------------------------------------------------
 
@@ -305,7 +297,6 @@ EOF
 
 [operator]
 key_file     = "operator.key"
-endpoint     = "${operator_endpoint}"
 capabilities = $(emit_operator_capabilities)
 metadata     = "${operator_metadata}"
 EOF

@@ -52,7 +52,9 @@ type Config struct {
 	Broadcast chain.BroadcastClient
 	Policy    *policy.Engine
 
-	// Registration metadata for agent_self_register.
+	// Registration metadata for agent_self_register. Endpoint is the
+	// agent's public_url — the on-chain record and the Agent Card always
+	// advertise the same base URL.
 	Endpoint     string
 	Capabilities []string
 	Metadata     string

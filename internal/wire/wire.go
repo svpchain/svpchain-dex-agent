@@ -314,7 +314,7 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 			Account:      chainDeps.Account,
 			Broadcast:    chainDeps.Broadcast,
 			Policy:       policyEngine,
-			Endpoint:     cfg.Operator.Endpoint,
+			Endpoint:     cfg.PublicURL,
 			Capabilities: cfg.Operator.Capabilities,
 			Metadata:     cfg.Operator.Metadata,
 		})
