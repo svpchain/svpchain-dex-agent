@@ -340,6 +340,7 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 			Account:      agentAccount,
 			Broadcast:    agentBroadcast,
 			Policy:       policyEngine,
+			Limits:       limitsCfg,
 			Endpoint:     cfg.PublicURL,
 			Capabilities: cfg.Operator.Capabilities,
 			Metadata:     cfg.Operator.Metadata,

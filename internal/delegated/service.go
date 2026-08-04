@@ -20,6 +20,7 @@ import (
 	"github.com/svpchain/svpchain-dex-agent/internal/operator"
 	"github.com/svpchain/svpchain-mcp/lib/mcp/builder"
 	"github.com/svpchain/svpchain-mcp/lib/mcp/chain"
+	"github.com/svpchain/svpchain-mcp/lib/mcp/limits"
 	"github.com/svpchain/svpchain-mcp/lib/mcp/markets"
 	"github.com/svpchain/svpchain-mcp/lib/mcp/policy"
 	"github.com/svpchain/svpchain-mcp/lib/mcp/tools"
@@ -27,14 +28,16 @@ import (
 	"github.com/cosmos/evm/crypto/ethsecp256k1"
 )
 
-// Actions in the chain's delegatable-message namespace. Only these three are
+// Actions in the chain's delegatable-message namespace. Only these four are
 // exposed as execute operations — the chain's registry allows exactly these
 // (plus update_leverage) and default-denies everything else, so refusing at
-// our edge gives the caller a real reason instead of a CheckTx code.
+// our edge gives the caller a real reason instead of a CheckTx code. Each
+// string must stay byte-identical to the fork's app/delegation constants.
 const (
 	ActionPlaceOrder  = "clob.place_order"
 	ActionCancelOrder = "clob.cancel_order"
 	ActionBatchCancel = "clob.batch_cancel"
+	ActionDeposit     = "sending.deposit_to_subaccount"
 )
 
 // Config wires a Service.
@@ -51,6 +54,11 @@ type Config struct {
 	Account   chain.AccountClient
 	Broadcast chain.BroadcastClient
 	Policy    *policy.Engine
+
+	// Limits caps delegated funds movements per tx, same knobs as the
+	// caller-signed build path. The chain-side delegation budget is the
+	// authoritative cap; this is the operator's own local ceiling.
+	Limits limits.Config
 
 	// Registration metadata for agent_self_register. Endpoint is the
 	// agent's public_url — the on-chain record and the Agent Card always
@@ -342,6 +350,50 @@ func (s *Service) ExecuteBatchCancel(ctx context.Context, in ExecBatchCancelInpu
 		SubaccountNum: in.Cancel.SubaccountNumber,
 		Batches:       batches,
 		GoodTilBlock:  in.Cancel.GoodTilBlock,
+	}, discardAssembler(s), 0, 0)
+	if err != nil {
+		return ExecResult{}, err
+	}
+	return s.execute(ctx, tokens, verified, inner)
+}
+
+// DepositParams describes a delegated subaccount deposit. As with orders, the
+// owner is deliberately absent — the deposit's sender and recipient owner are
+// both always the credential's principal, matching the chain registry's
+// sender == recipient.owner containment.
+type DepositParams struct {
+	SubaccountNumber uint32 `json:"subaccount_number"`
+	HumanUSDC        string `json:"human_usdc"` // e.g. "100", "1.5"
+}
+
+type ExecDepositInput struct {
+	Proof   []string      `json:"proof"`
+	Deposit DepositParams `json:"deposit"`
+}
+
+// ExecuteDepositToSubaccount verifies the proof and moves the principal's own
+// wallet USDC into the principal's subaccount. On chain the amount debits the
+// delegation budget like an order's notional does; unlike short-term orders,
+// the wrapped tx is fee-paying (the operator pays gas).
+func (s *Service) ExecuteDepositToSubaccount(ctx context.Context, in ExecDepositInput) (ExecResult, error) {
+	tokens, verified, err := s.verifyProof(ctx, in.Proof)
+	if err != nil {
+		return ExecResult{}, err
+	}
+	if err := preflight(verified, ActionDeposit, in.Deposit.SubaccountNumber); err != nil {
+		return ExecResult{}, err
+	}
+	quantums, err := limits.HumanToQuantums(in.Deposit.HumanUSDC)
+	if err != nil {
+		return ExecResult{}, fmt.Errorf("human_usdc: %w", err)
+	}
+	if err := limits.CheckPerTx(s.cfg.Limits, limits.ToolDeposit, quantums); err != nil {
+		return ExecResult{}, err
+	}
+	inner, _, err := builder.BuildDepositToSubaccount(builder.DepositToSubaccountInput{
+		Owner:         verified.Principal,
+		SubaccountNum: in.Deposit.SubaccountNumber,
+		HumanUSDC:     in.Deposit.HumanUSDC,
 	}, discardAssembler(s), 0, 0)
 	if err != nil {
 		return ExecResult{}, err

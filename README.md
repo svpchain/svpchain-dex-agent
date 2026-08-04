@@ -47,24 +47,35 @@ svpchain-signer-mcp) and lands via `broadcast_signed_tx`.
 ## Delegated execution
 
 The one place the agent signs on its own: `execute_place_order`,
-`execute_cancel_order`, and `execute_batch_cancel` take an SVP-DT delegation
-proof (the base64 token chain, root first) plus order parameters. The agent
+`execute_cancel_order`, `execute_batch_cancel`, and
+`execute_deposit_to_subaccount` take an SVP-DT delegation proof (the base64
+token chain, root first) plus the operation's parameters. The agent
 
 1. verifies the chain with `svpdt.VerifyChain` — signatures against the
    registered keys in `x/agent`, linkage, monotonicity, expiry, depth, and
    that the leaf is addressed to *this* agent's DID — with ceilings read from
    the chain's own `x/agentwallet` params;
 2. pre-flights the caveats (action granted, subaccount inside the grant);
-3. builds the inner order **for the credential's principal** (never a
+3. builds the inner message **for the credential's principal** (never a
    caller-chosen owner), wraps it in `MsgAgentExecDelegated`, signs as the
    registered operator, and broadcasts.
 
 The position lands on the delegator's subaccount; the chain re-verifies
 everything against live state (epoch, revocation, nonce, budget) in its
-AnteHandler. Wrapped short-term orders ride the chain's gas-free route.
+AnteHandler. Wrapped short-term orders ride the chain's gas-free route;
+deposits pay gas from the operator's account.
+
+Delegated deposits require the `sending.deposit_to_subaccount` action in the
+credential and the on-chain delegation. They can only move the **delegator's
+own wallet USDC into the delegator's own subaccount** (the chain refuses any
+other sender), the amount debits the delegation budget exactly like an
+order's notional, and the agent additionally applies its local
+`deposit_max_usdc` per-tx cap.
 
 Requires an `[operator]` key. `agent_self_register` (gated to the operator
 itself) registers the agent on chain with `agent_id = did:svp:<operator>`.
+After any deploy that changes the served card (adding an execute op does),
+run `agent_self_update` so the on-chain capability hash matches the card.
 
 **Agent chain.** By default the DEX chain itself carries `x/agent` +
 `x/agentwallet`. When it doesn't, an optional `[agent_chain]` section

@@ -145,12 +145,15 @@ var skillMetas = []skillMeta{
 	{
 		id:   toolbridge.SkillExecution,
 		name: "SVP-Chain Delegated Execution",
-		desc: "Place and cancel orders on behalf of a user under an SVP-DT delegation " +
-			"credential: the agent verifies the credential chain, wraps the order in " +
+		desc: "Place and cancel orders — and deposit the user's own wallet USDC into " +
+			"their subaccount — on behalf of a user under an SVP-DT delegation " +
+			"credential: the agent verifies the credential chain, wraps the message in " +
 			"MsgAgentExecDelegated, signs as the registered operator, and broadcasts. The " +
-			"position lands on the user's subaccount, never the agent's. Requires a " +
-			"delegation proof whose leaf token is addressed to this agent.",
-		tags: []string{"execution", "trading", "delegation", "svp-dt"},
+			"position lands on the user's subaccount, never the agent's; a deposit can " +
+			"only move funds from the delegator's wallet into the delegator's subaccount " +
+			"and debits the delegation budget. Requires a delegation proof whose leaf " +
+			"token is addressed to this agent.",
+		tags: []string{"execution", "trading", "deposit", "delegation", "svp-dt"},
 		examples: []string{
 			`{"skill":"svpchain-execution","tool":"execute_place_order","args":{"proof":["<base64 token>"],"order":{…}}}`,
 		},
