@@ -93,6 +93,15 @@ func (e *Executor) handle(ctx context.Context, execCtx *a2asrv.ExecutorContext) 
 		return "", fmt.Errorf("no skill named")
 	}
 
+	// The canonical carrier for an SVP-DT credential chain is the message
+	// metadata (the args "proof" field survives as a deprecated alias). Read
+	// it before any dispatch so a malformed attachment is refused up front
+	// rather than quietly dropped.
+	deleg, err := delegationFromMessage(execCtx.Message)
+	if err != nil {
+		return "", err
+	}
+
 	// Legacy read-layer form: {"skill":"svpchain-market-data","query":...}.
 	// Served straight from the market-data service so pre-envelope callers
 	// (and the original examples on the card) keep working byte-for-byte.
@@ -131,6 +140,14 @@ func (e *Executor) handle(ctx context.Context, execCtx *a2asrv.ExecutorContext) 
 
 	if e.authr != nil {
 		ctx = e.authr.Attach(ctx, execCtx, &req)
+	}
+
+	if deleg != nil {
+		args, err := injectProof(req.Args, deleg.Tokens)
+		if err != nil {
+			return "", err
+		}
+		req.Args = args
 	}
 
 	resp := Response{Skill: req.Skill, Tool: req.Tool}

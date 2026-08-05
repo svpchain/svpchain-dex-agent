@@ -152,10 +152,12 @@ var skillMetas = []skillMeta{
 			"position lands on the user's subaccount, never the agent's; a deposit can " +
 			"only move funds from the delegator's wallet into the delegator's subaccount " +
 			"and debits the delegation budget. Requires a delegation proof whose leaf " +
-			"token is addressed to this agent.",
+			"token is addressed to this agent, carried in message.metadata under " +
+			`"svp.delegation/v1" (or, deprecated, as the "proof" args field).`,
 		tags: []string{"execution", "trading", "deposit", "delegation", "svp-dt"},
 		examples: []string{
-			`{"skill":"svpchain-execution","tool":"execute_place_order","args":{"proof":["<base64 token>"],"order":{…}}}`,
+			`message.metadata: {"svp.delegation/v1":{"tokens":["<base64 token>", "…"]}} · ` +
+				`text: {"skill":"svpchain-execution","tool":"execute_place_order","args":{"order":{…}}}`,
 		},
 	},
 }
@@ -205,6 +207,16 @@ func BuildAgentCard(publicURL string, reg *toolbridge.Registry) *a2a.AgentCard {
 		DefaultOutputModes: []string{"application/json"},
 		Capabilities: a2a.AgentCapabilities{
 			Streaming: true,
+			// Required is false because the read layer (market data, and the
+			// whole build-and-sign-yourself surface) serves callers with no
+			// credential at all; only delegated execution needs one.
+			Extensions: []a2a.AgentExtension{{
+				URI: DelegationExtensionURI,
+				Description: "SVP-DT delegated execution: attach the credential chain as " +
+					"message.metadata[\"" + DelegationMetadataKey + "\"] = {\"tokens\": [<base64 " +
+					"canonical-CBOR>, …]}, root-issued token first, leaf addressed to this agent.",
+				Params: map[string]any{"metadataKey": DelegationMetadataKey},
+			}},
 		},
 		Provider: &a2a.AgentProvider{
 			Org: "svpchain",

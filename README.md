@@ -49,7 +49,10 @@ svpchain-signer-mcp) and lands via `broadcast_signed_tx`.
 The one place the agent signs on its own: `execute_place_order`,
 `execute_cancel_order`, `execute_batch_cancel`, and
 `execute_deposit_to_subaccount` take an SVP-DT delegation proof (the base64
-token chain, root first) plus the operation's parameters. The agent
+token chain, root first) plus the operation's parameters. The proof rides the
+A2A message metadata as `"svp.delegation/v1": {"tokens": [...]}` — the
+carrier the Agent Card's delegation extension advertises — or, deprecated,
+as the `proof` field of the tool args. The agent
 
 1. verifies the chain with `svpdt.VerifyChain` — signatures against the
    registered keys in `x/agent`, linkage, monotonicity, expiry, depth, and

@@ -130,7 +130,7 @@ func (s *Service) walletParams(ctx context.Context) (wallettypes.Params, error) 
 // this agent, returning what the chain actually grants.
 func (s *Service) verifyProof(ctx context.Context, proofB64 []string) ([][]byte, *svpdt.Verified, error) {
 	if len(proofB64) == 0 {
-		return nil, nil, fmt.Errorf("a delegation proof is required: pass the SVP-DT token chain (base64, root first)")
+		return nil, nil, fmt.Errorf(`a delegation proof is required: attach the SVP-DT token chain (base64, root first) as message metadata "svp.delegation/v1"`)
 	}
 	tokens := make([][]byte, len(proofB64))
 	for i, t := range proofB64 {
