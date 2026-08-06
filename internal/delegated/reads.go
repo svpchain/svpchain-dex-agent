@@ -31,8 +31,9 @@ type readSpec struct {
 // pin) — get_order, which takes only an order id, is excluded for exactly that
 // reason. Growing the set is one line here plus a card mention.
 var readSpecs = map[string]readSpec{
-	"get_subaccount": {ownerField: "address", hasSubaccount: true},
-	"get_balance":    {ownerField: "owner"},
+	"get_subaccount":      {ownerField: "address", hasSubaccount: true},
+	"get_live_subaccount": {ownerField: "owner", hasSubaccount: true},
+	"get_balance":         {ownerField: "owner"},
 }
 
 // ReadSpecFor reports whether tool accepts a delegated-read credential.

@@ -58,7 +58,8 @@ var skillMetas = []skillMeta{
 		name: "SVP-Chain Account & Positions",
 		desc: "Owner-scoped reads: subaccounts (indexer and live chain), wallet balances, " +
 			"orders, fills, transfers, PnL, and funding payments. Requires a bearer from " +
-			"the svpchain-auth skill — or, for get_subaccount and get_balance, an SVP-DT " +
+			"the svpchain-auth skill — or, for get_subaccount, get_live_subaccount and get_balance, " +
+			"an SVP-DT " +
 			`credential granting the "query.account" action, attached as message.metadata ` +
 			`"svp.delegation/v1"; the owner then defaults to the credential's principal, ` +
 			"and the credential stays reusable for polling until it expires.",
@@ -221,7 +222,8 @@ func BuildAgentCard(publicURL string, reg *toolbridge.Registry) *a2a.AgentCard {
 					"the credential chain as message.metadata[\"" + DelegationMetadataKey + "\"] = " +
 					"{\"tokens\": [<base64 canonical-CBOR>, …]}, root-issued token first, leaf " +
 					"addressed to this agent. Execution needs the matching execute action; " +
-					"get_subaccount/get_balance need the \"query.account\" action (no budget).",
+					"get_subaccount/get_live_subaccount/get_balance need the \"query.account\" " +
+					"action (no budget).",
 				Params: map[string]any{"metadataKey": DelegationMetadataKey},
 			}},
 		},

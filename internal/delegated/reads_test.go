@@ -104,6 +104,24 @@ func TestAuthorizeReadPinsArgsToPrincipal(t *testing.T) {
 		t.Errorf("owner dropped: %s", args)
 	}
 
+	// The live-chain read is covered under the same credential, pinned the
+	// same way through its "owner" field.
+	_, args, err = f.svc.AuthorizeRead(context.Background(), "get_live_subaccount", proof,
+		json.RawMessage(`{"subaccount_number":0}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var live struct {
+		Owner            string `json:"owner"`
+		SubaccountNumber uint32 `json:"subaccount_number"`
+	}
+	if err := json.Unmarshal(args, &live); err != nil {
+		t.Fatal(err)
+	}
+	if live.Owner != testDelegator || live.SubaccountNumber != 0 {
+		t.Errorf("live args = %+v, want owner defaulted to the principal", live)
+	}
+
 	// The verified grant admits as a tenant the policy engine resolves.
 	src := NewReadTenantSource(func() int64 { return testNow })
 	tc := src.Admit(verified)
@@ -177,6 +195,12 @@ func TestAuthorizeReadRefusals(t *testing.T) {
 		},
 		"subaccount not granted": {
 			tool:    "get_subaccount",
+			proof:   func(t *testing.T) []string { return f.issueRead(t, nil) },
+			args:    json.RawMessage(`{"subaccount_number":3}`),
+			wantErr: "does not grant subaccount",
+		},
+		"live subaccount not granted": {
+			tool:    "get_live_subaccount",
 			proof:   func(t *testing.T) []string { return f.issueRead(t, nil) },
 			args:    json.RawMessage(`{"subaccount_number":3}`),
 			wantErr: "does not grant subaccount",
