@@ -159,11 +159,17 @@ var skillMetas = []skillMeta{
 			"only move funds from the delegator's wallet into the delegator's subaccount " +
 			"and debits the delegation budget. Requires a delegation proof whose leaf " +
 			"token is addressed to this agent, carried in message.metadata under " +
-			`"svp.delegation/v1" (or, deprecated, as the "proof" args field).`,
+			`"svp.delegation/v1" (or, deprecated, as the "proof" args field). ` +
+			"Each execute tool nests its parameters under a wrapper key — " +
+			`"order" (execute_place_order), "cancel" (execute_cancel_order, ` +
+			`execute_batch_cancel), "deposit" (execute_deposit_to_subaccount) — ` +
+			"never flat in args; an unknown top-level args key is refused.",
 		tags: []string{"execution", "trading", "deposit", "delegation", "svp-dt"},
 		examples: []string{
 			`message.metadata: {"svp.delegation/v1":{"tokens":["<base64 token>", "…"]}} · ` +
-				`text: {"skill":"svpchain-execution","tool":"execute_place_order","args":{"order":{…}}}`,
+				`text: {"skill":"svpchain-execution","tool":"execute_place_order","args":{"order":{"subaccount_number":0,"ticker":"BTC-USD","side":"BUY","size":"0.001","price":"60000","good_til_block":123,"order_client_id":7}}}`,
+			`message.metadata: {"svp.delegation/v1":{"tokens":["<base64 token>", "…"]}} · ` +
+				`text: {"skill":"svpchain-execution","tool":"execute_deposit_to_subaccount","args":{"deposit":{"subaccount_number":1,"human_usdc":"10"}}}`,
 		},
 	},
 }

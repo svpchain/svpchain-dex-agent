@@ -15,7 +15,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -68,6 +71,66 @@ func adaptNative[In, Out any](f func(context.Context, In) (Out, error)) func(con
 		}
 		return f(ctx, in)
 	}
+}
+
+// adaptStrictNative is adaptNative refusing unknown top-level arg keys. The
+// execution inputs nest their parameters under a wrapper object ("order",
+// "cancel", "deposit"); a caller passing the fields flat — the read tools'
+// shape — would otherwise have them silently dropped and the tool would run
+// against zero values, e.g. a deposit resolving to subaccount 0 no matter
+// what was asked. Refusing up front turns that trap into an actionable error.
+func adaptStrictNative[In, Out any](f func(context.Context, In) (Out, error)) func(context.Context, json.RawMessage) (any, error) {
+	allowed := jsonKeysOf[In]()
+	inner := adaptNative(f)
+	return func(ctx context.Context, raw json.RawMessage) (any, error) {
+		if len(raw) > 0 {
+			var top map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &top); err != nil {
+				return nil, fmt.Errorf("decode args: %w", err)
+			}
+			for k := range top {
+				if !allowed[k] {
+					return nil, fmt.Errorf(
+						"unknown args key %q — this tool takes %s; tool parameters nest under the wrapper object, not at the top level",
+						k, keyList(allowed))
+				}
+			}
+		}
+		return inner(ctx, raw)
+	}
+}
+
+// jsonKeysOf returns the JSON keys of In's top-level struct fields.
+func jsonKeysOf[In any]() map[string]bool {
+	keys := map[string]bool{}
+	t := reflect.TypeFor[In]()
+	if t.Kind() != reflect.Struct {
+		return keys
+	}
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		switch name {
+		case "-":
+			continue
+		case "":
+			name = f.Name
+		}
+		keys[name] = true
+	}
+	return keys
+}
+
+func keyList(keys map[string]bool) string {
+	names := make([]string, 0, len(keys))
+	for k := range keys {
+		names = append(names, strconv.Quote(k))
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
 }
 
 func resultText(res *mcp.CallToolResult) string {

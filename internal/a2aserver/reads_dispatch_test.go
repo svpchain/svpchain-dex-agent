@@ -165,7 +165,7 @@ func newDelegatedReadStack(t *testing.T) *readStack {
 		BroadcastMode:    "server",
 	})
 	reg := toolbridge.New(h)
-	reg.RegisterExecution(nil)
+	reg.RegisterExecution(svc)
 
 	exec := NewFullExecutor(
 		marketdata.NewService(fakeReader{}),
@@ -258,6 +258,24 @@ func TestBearerTakesPrecedenceOverProof(t *testing.T) {
 	sub, _ := result["subaccount"].(map[string]any)
 	if addr, _ := sub["address"].(string); addr != "svp1headerowner" {
 		t.Errorf("read answered for %q, want the bearer owner", addr)
+	}
+}
+
+// Execution args must nest under their wrapper key; the flat shape the read
+// tools accept is refused by name instead of silently targeting subaccount 0.
+func TestExecutionRefusesFlatArgs(t *testing.T) {
+	s := newDelegatedReadStack(t)
+	meta := map[string]any{"tokens": s.issue(t, "sending.deposit_to_subaccount")}
+
+	ec := execCtxWithDelegation(
+		`{"skill":"svpchain-execution","tool":"execute_deposit_to_subaccount",`+
+			`"args":{"subaccount_number":1,"human_usdc":"10"}}`, meta)
+	resp := dispatch(t, s.exec, ec)
+	if resp.OK {
+		t.Fatal("flat execution args must refuse")
+	}
+	if !strings.Contains(resp.Error, "unknown args key") || !strings.Contains(resp.Error, `"deposit"`) {
+		t.Errorf("refusal must name the wrapper key, got: %s", resp.Error)
 	}
 }
 

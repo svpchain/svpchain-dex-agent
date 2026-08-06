@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -85,6 +86,43 @@ func TestAdaptNative(t *testing.T) {
 	}
 	if out.(echoOut).Echoed != "native" {
 		t.Errorf("expected echoed input, got %+v", out)
+	}
+}
+
+// The strict adapter turns the flat-args trap into an actionable refusal: an
+// execution input's parameters nest under a wrapper key, and a flat field
+// would silently decode to zero values (a deposit targeting subaccount 0).
+func TestAdaptStrictNativeRefusesUnknownTopLevelKeys(t *testing.T) {
+	type depositParams struct {
+		SubaccountNumber uint32 `json:"subaccount_number"`
+	}
+	type execIn struct {
+		Proof   []string      `json:"proof"`
+		Deposit depositParams `json:"deposit"`
+	}
+	called := false
+	call := adaptStrictNative(func(_ context.Context, in execIn) (uint32, error) {
+		called = true
+		return in.Deposit.SubaccountNumber, nil
+	})
+
+	// Flat args — the read tools' shape — refuse and name the real keys.
+	_, err := call(context.Background(), json.RawMessage(`{"subaccount_number":1,"human_usdc":"10"}`))
+	if err == nil || !strings.Contains(err.Error(), "unknown args key") ||
+		!strings.Contains(err.Error(), `"deposit"`) {
+		t.Fatalf("flat args must refuse naming the wrapper key, got %v", err)
+	}
+	if called {
+		t.Fatal("the handler must not run on refused args")
+	}
+
+	// Properly nested args — with the metadata-injected proof key — pass.
+	out, err := call(context.Background(), json.RawMessage(`{"proof":["tok"],"deposit":{"subaccount_number":1}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.(uint32) != 1 {
+		t.Errorf("nested subaccount_number lost: got %v", out)
 	}
 }
 

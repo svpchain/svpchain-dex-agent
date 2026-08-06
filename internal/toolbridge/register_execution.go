@@ -31,10 +31,13 @@ func (r *Registry) RegisterExecution(s *delegated.Service) {
 		}
 		return
 	}
-	r.add(SkillExecution, "execute_place_order", adaptNative(s.ExecutePlaceOrder))
-	r.add(SkillExecution, "execute_cancel_order", adaptNative(s.ExecuteCancelOrder))
-	r.add(SkillExecution, "execute_batch_cancel", adaptNative(s.ExecuteBatchCancel))
-	r.add(SkillExecution, "execute_deposit_to_subaccount", adaptNative(s.ExecuteDepositToSubaccount))
+	// Strict decoding on the execute inputs: their parameters nest under a
+	// wrapper key ("order", "cancel", "deposit"), and flat args silently
+	// decoding to zero values would target subaccount 0.
+	r.add(SkillExecution, "execute_place_order", adaptStrictNative(s.ExecutePlaceOrder))
+	r.add(SkillExecution, "execute_cancel_order", adaptStrictNative(s.ExecuteCancelOrder))
+	r.add(SkillExecution, "execute_batch_cancel", adaptStrictNative(s.ExecuteBatchCancel))
+	r.add(SkillExecution, "execute_deposit_to_subaccount", adaptStrictNative(s.ExecuteDepositToSubaccount))
 	r.add(SkillExecution, "agent_identity", adaptNative(s.Identity))
 	r.add(SkillExecution, "agent_self_register", adaptNative(s.SelfRegister))
 	r.add(SkillExecution, "agent_self_update", adaptNative(s.SelfUpdate))
