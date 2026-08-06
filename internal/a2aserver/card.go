@@ -56,12 +56,13 @@ var skillMetas = []skillMeta{
 	{
 		id:   toolbridge.SkillAccount,
 		name: "SVP-Chain Account & Positions",
-		desc: "Owner-scoped reads: subaccounts (indexer and live chain), wallet balances, " +
-			"orders, fills, transfers, PnL, and funding payments. Requires a bearer from " +
-			"the svpchain-auth skill — or, for get_subaccount, get_live_subaccount and get_balance, " +
-			"an SVP-DT " +
-			`credential granting the "query.account" action, attached as message.metadata ` +
-			`"svp.delegation/v1"; the owner then defaults to the credential's principal, ` +
+		desc: "Owner-scoped reads: subaccounts (indexer, or live from chain gRPC via " +
+			"get_live_subaccount, which answers even when the indexer is down), wallet " +
+			"balances, orders, fills, transfers, PnL, and funding payments. Requires a bearer from " +
+			"the svpchain-auth skill — or an SVP-DT credential granting the " +
+			`"query.account" action, attached as message.metadata "svp.delegation/v1", ` +
+			"which covers every owner-scoped read except the id-only get_order and the " +
+			"session tool whoami; the owner then defaults to the credential's principal, " +
 			"and the credential stays reusable for polling until it expires.",
 		tags: []string{"account", "positions", "pnl", "orders"},
 		examples: []string{
@@ -227,9 +228,14 @@ func BuildAgentCard(publicURL string, reg *toolbridge.Registry) *a2a.AgentCard {
 				Description: "SVP-DT delegated execution and read-only account queries: attach " +
 					"the credential chain as message.metadata[\"" + DelegationMetadataKey + "\"] = " +
 					"{\"tokens\": [<base64 canonical-CBOR>, …]}, root-issued token first, leaf " +
-					"addressed to this agent. Execution needs the matching execute action; " +
-					"get_subaccount/get_live_subaccount/get_balance need the \"query.account\" " +
-					"action (no budget).",
+					"addressed to this agent. Execution needs the matching execute action — " +
+					"execute_place_order: \"clob.place_order\" (budget required), " +
+					"execute_cancel_order: \"clob.cancel_order\", " +
+					"execute_batch_cancel: \"clob.batch_cancel\", " +
+					"execute_deposit_to_subaccount: \"sending.deposit_to_subaccount\" " +
+					"(budget required); " +
+					"owner-scoped account reads (all but the id-only get_order and whoami) " +
+					"need the \"query.account\" action (no budget).",
 				Params: map[string]any{"metadataKey": DelegationMetadataKey},
 			}},
 		},

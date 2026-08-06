@@ -26,14 +26,21 @@ type readSpec struct {
 	hasSubaccount bool
 }
 
-// readSpecs lists the tools a query.account credential covers. Deliberately
-// small: every entry must be principal-boundable (an owner argument exists to
-// pin) — get_order, which takes only an order id, is excluded for exactly that
-// reason. Growing the set is one line here plus a card mention.
+// readSpecs lists the tools a query.account credential covers. Every entry
+// must be principal-boundable (an owner argument exists to pin) — get_order,
+// which takes only an order id, is excluded for exactly that reason, and
+// whoami because it introspects a bearer session. Growing the set is one line
+// here plus a card mention.
 var readSpecs = map[string]readSpec{
-	"get_subaccount":      {ownerField: "address", hasSubaccount: true},
-	"get_live_subaccount": {ownerField: "owner", hasSubaccount: true},
-	"get_balance":         {ownerField: "owner"},
+	"get_subaccount":       {ownerField: "address", hasSubaccount: true},
+	"get_live_subaccount":  {ownerField: "owner", hasSubaccount: true},
+	"get_balance":          {ownerField: "owner"},
+	"get_orders":           {ownerField: "address", hasSubaccount: true},
+	"get_fills":            {ownerField: "address", hasSubaccount: true},
+	"get_transfers":        {ownerField: "address", hasSubaccount: true},
+	"get_pnl":              {ownerField: "address", hasSubaccount: true},
+	"get_historical_pnl":   {ownerField: "address", hasSubaccount: true},
+	"get_funding_payments": {ownerField: "address", hasSubaccount: true},
 }
 
 // ReadSpecFor reports whether tool accepts a delegated-read credential.

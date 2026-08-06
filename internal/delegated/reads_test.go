@@ -161,9 +161,15 @@ func TestAuthorizeReadRefusals(t *testing.T) {
 		wantErr string
 	}{
 		"uncovered tool": {
-			tool:    "get_orders",
+			tool:    "get_order",
 			proof:   func(t *testing.T) []string { return f.issueRead(t, nil) },
 			wantErr: "does not accept delegated-read credentials",
+		},
+		"orders subaccount not granted": {
+			tool:    "get_orders",
+			proof:   func(t *testing.T) []string { return f.issueRead(t, nil) },
+			args:    json.RawMessage(`{"subaccount_number":3}`),
+			wantErr: "does not grant subaccount",
 		},
 		"action not granted": {
 			tool:    "get_balance",
