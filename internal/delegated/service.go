@@ -93,7 +93,21 @@ type Service struct {
 	paramsFetched  int64
 	paramsCacheTTL int64
 
+	// epochMu guards a short-TTL per-root cache of epoch/paused state, used by
+	// the delegated-read path. Reads never broadcast, so the chain's Authorize
+	// never re-checks them — this heartbeat is the only thing bounding how long
+	// a paused or revoked root keeps answering reads. The TTL is the bound.
+	epochMu       sync.Mutex
+	epochCache    map[[32]byte]epochEntry
+	epochCacheTTL int64
+
 	now func() int64
+}
+
+type epochEntry struct {
+	epoch   uint64
+	paused  bool
+	fetched int64
 }
 
 // New builds the service. cfg.Priv must be non-nil — a keyless deployment
@@ -105,6 +119,8 @@ func New(cfg Config) *Service {
 		agentID:        agenttypes.AgentIdFromOperator(operatorAddr),
 		resolver:       NewGRPCResolver(cfg.AgentQ, cfg.AuthQ),
 		paramsCacheTTL: 60,
+		epochCache:     map[[32]byte]epochEntry{},
+		epochCacheTTL:  10,
 		now:            func() int64 { return time.Now().Unix() },
 	}
 }
@@ -157,7 +173,29 @@ func (s *Service) verifyProof(ctx context.Context, proofB64 []string) ([][]byte,
 	if err != nil {
 		return nil, nil, fmt.Errorf("credential chain rejected: %w", err)
 	}
+	if err := checkRedelegationTargets(verified); err != nil {
+		return nil, nil, fmt.Errorf("credential chain rejected: %w", err)
+	}
 	return tokens, verified, nil
+}
+
+// checkRedelegationTargets asserts that every child token's audience is one
+// the parent's redelegate_to caveat allows. VerifyChain does not check this:
+// only the cooperative Attenuate helper enforces redelegate_to, and a hostile
+// intermediary hand-crafting a child token never calls Attenuate — it only
+// needs its own key and the parent bytes. Without this check, a redelegable
+// credential naming explicit targets could still be extended to anyone.
+func checkRedelegationTargets(v *svpdt.Verified) error {
+	for i := 1; i < len(v.Tokens); i++ {
+		parent := &v.Tokens[i-1].Payload
+		child := &v.Tokens[i].Payload
+		if !parent.Caveats.RedelegateTo.Allows(child.Audience) {
+			return fmt.Errorf(
+				"depth-%d token is addressed to %q, which its parent's redelegate_to does not allow",
+				i+1, child.Audience)
+		}
+	}
+	return nil
 }
 
 // preflight checks the caveat facts we can check without chain state: the

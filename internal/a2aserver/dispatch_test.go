@@ -68,6 +68,7 @@ func newAuthedStack(t *testing.T) (*Executor, *auth.DynamicTenantStore, *auth.Se
 		marketdata.NewService(fakeReader{}),
 		reg,
 		&AuthResolver{Tenants: tenants, Sessions: sessions},
+		nil, nil,
 	)
 	return exec, tenants, sessions
 }

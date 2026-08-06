@@ -58,10 +58,15 @@ var skillMetas = []skillMeta{
 		name: "SVP-Chain Account & Positions",
 		desc: "Owner-scoped reads: subaccounts (indexer and live chain), wallet balances, " +
 			"orders, fills, transfers, PnL, and funding payments. Requires a bearer from " +
-			"the svpchain-auth skill.",
+			"the svpchain-auth skill — or, for get_subaccount and get_balance, an SVP-DT " +
+			`credential granting the "query.account" action, attached as message.metadata ` +
+			`"svp.delegation/v1"; the owner then defaults to the credential's principal, ` +
+			"and the credential stays reusable for polling until it expires.",
 		tags: []string{"account", "positions", "pnl", "orders"},
 		examples: []string{
-			`{"skill":"svpchain-account","tool":"get_subaccount","args":{"owner":"svp1…","subaccount_number":0},"bearer":"…"}`,
+			`{"skill":"svpchain-account","tool":"get_subaccount","args":{"address":"svp1…","subaccount_number":0},"bearer":"…"}`,
+			`message.metadata: {"svp.delegation/v1":{"tokens":["<base64 token>", "…"]}} · ` +
+				`text: {"skill":"svpchain-account","tool":"get_balance","args":{}}`,
 		},
 	},
 	{
@@ -212,9 +217,11 @@ func BuildAgentCard(publicURL string, reg *toolbridge.Registry) *a2a.AgentCard {
 			// credential at all; only delegated execution needs one.
 			Extensions: []a2a.AgentExtension{{
 				URI: DelegationExtensionURI,
-				Description: "SVP-DT delegated execution: attach the credential chain as " +
-					"message.metadata[\"" + DelegationMetadataKey + "\"] = {\"tokens\": [<base64 " +
-					"canonical-CBOR>, …]}, root-issued token first, leaf addressed to this agent.",
+				Description: "SVP-DT delegated execution and read-only account queries: attach " +
+					"the credential chain as message.metadata[\"" + DelegationMetadataKey + "\"] = " +
+					"{\"tokens\": [<base64 canonical-CBOR>, …]}, root-issued token first, leaf " +
+					"addressed to this agent. Execution needs the matching execute action; " +
+					"get_subaccount/get_balance need the \"query.account\" action (no budget).",
 				Params: map[string]any{"metadataKey": DelegationMetadataKey},
 			}},
 		},

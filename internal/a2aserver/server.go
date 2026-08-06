@@ -53,6 +53,8 @@ func StartFull(ctx context.Context, cfg *config.Config, app *wire.App) error {
 		marketdata.NewService(app.Indexer),
 		app.Registry,
 		&AuthResolver{Tenants: app.Tenants, Sessions: app.Sessions},
+		app.Delegated,
+		app.ReadTenants,
 	)
 
 	// Hand the delegated service the exact bytes the card route serves

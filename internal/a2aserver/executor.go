@@ -10,8 +10,10 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/svpchain/svpchain-dex-agent/internal/delegated"
 	"github.com/svpchain/svpchain-dex-agent/internal/marketdata"
 	"github.com/svpchain/svpchain-dex-agent/internal/toolbridge"
+	"github.com/svpchain/svpchain-mcp/lib/mcp/tools"
 )
 
 // Executor answers A2A tasks by dispatching them into the operation registry.
@@ -27,6 +29,13 @@ type Executor struct {
 	// only the market-data legacy queries answer, everything else refuses.
 	registry *toolbridge.Registry
 	authr    *AuthResolver
+
+	// reads and readTenants serve delegated read-only access: an SVP-DT
+	// credential granting query.account authorizes the covered account
+	// queries for its principal, without any bearer. Both are nil on keyless
+	// deployments — delegated reads then refuse alongside delegated execution.
+	reads       *delegated.Service
+	readTenants *delegated.ReadTenantSource
 }
 
 var _ a2asrv.AgentExecutor = (*Executor)(nil)
@@ -37,8 +46,8 @@ func NewExecutor(market *marketdata.Service) *Executor {
 }
 
 // NewFullExecutor returns an executor serving the whole operation registry.
-func NewFullExecutor(market *marketdata.Service, registry *toolbridge.Registry, authr *AuthResolver) *Executor {
-	return &Executor{market: market, registry: registry, authr: authr}
+func NewFullExecutor(market *marketdata.Service, registry *toolbridge.Registry, authr *AuthResolver, reads *delegated.Service, readTenants *delegated.ReadTenantSource) *Executor {
+	return &Executor{market: market, registry: registry, authr: authr, reads: reads, readTenants: readTenants}
 }
 
 func (e *Executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
@@ -140,6 +149,24 @@ func (e *Executor) handle(ctx context.Context, execCtx *a2asrv.ExecutorContext) 
 
 	if e.authr != nil {
 		ctx = e.authr.Attach(ctx, execCtx, &req)
+	}
+
+	// Delegated reads: a proof on a covered query tool authenticates the call
+	// as the credential's principal — but only when no bearer resolved, so a
+	// caller presenting both keeps the bearer's (wider) tenant. Runs before
+	// injectProof; the alias "proof" key that injectProof adds afterwards is
+	// ignored by the query handlers' plain json.Unmarshal.
+	if deleg != nil && e.reads != nil && e.readTenants != nil {
+		if _, isRead := delegated.ReadSpecFor(req.Tool); isRead {
+			if _, hasTenant := tools.TenantFrom(ctx); !hasTenant {
+				verified, newArgs, err := e.reads.AuthorizeRead(ctx, req.Tool, deleg.Tokens, req.Args)
+				if err != nil {
+					return "", err
+				}
+				req.Args = newArgs
+				ctx = tools.WithTenant(ctx, e.readTenants.Admit(verified))
+			}
+		}
 	}
 
 	if deleg != nil {

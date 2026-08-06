@@ -61,6 +61,11 @@ type App struct {
 	// server layer can hand it the served agent-card bytes — the capability
 	// hash it registers on chain is sha256 of exactly those bytes.
 	Delegated *delegated.Service
+
+	// ReadTenants admits verified delegated-read credentials as synthetic
+	// tenants; already registered as a policy dynamic source. Non-nil even
+	// when Delegated is nil — it just never admits anyone then.
+	ReadTenants *delegated.ReadTenantSource
 }
 
 // Close releases the app's long-lived connections.
@@ -106,6 +111,19 @@ func (a dynamicTenantAdapter) LookupTenantPolicy(tenantID string) (policy.Tenant
 		AllowedSubaccounts: rec.AllowedSubaccounts,
 		KillSwitch:         rec.KillSwitch,
 	}, true
+}
+
+// multiDynamicSource fans the policy engine's single dynamic-source slot out
+// to several tenant populations; the first source that answers wins.
+type multiDynamicSource []policy.DynamicSource
+
+func (m multiDynamicSource) LookupTenantPolicy(tenantID string) (policy.TenantPolicy, bool) {
+	for _, src := range m {
+		if tp, ok := src.LookupTenantPolicy(tenantID); ok {
+			return tp, true
+		}
+	}
+	return policy.TenantPolicy{}, false
 }
 
 // Build wires the configuration into a ready-to-run App.
@@ -256,8 +274,16 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 	ipLimit := auth.NewIPRateLimiter(auth.DefaultIPChallengeRate, auth.DefaultIPChallengeWindow, nil)
 	sessionBearers := auth.NewSessionBearers(auth.DefaultBearerTTL, nil)
 
+	// Two dynamic tenant populations resolve through the engine's single
+	// fallback slot: bearer-minted tenants ("auto-…") and proof-derived
+	// delegated-read tenants ("svpdt-…"). The prefixes keep the id spaces
+	// disjoint, so first-hit-wins never shadows.
+	readTenants := delegated.NewReadTenantSource(nil)
 	policyEngine := policy.NewEngine(nil)
-	policyEngine.SetDynamicSource(dynamicTenantAdapter{store: dynamicTenants})
+	policyEngine.SetDynamicSource(multiDynamicSource{
+		dynamicTenantAdapter{store: dynamicTenants},
+		readTenants,
+	})
 
 	deps := tools.Deps{
 		Chain:             chainDeps,
@@ -350,15 +376,16 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 	registry.RegisterExecution(delegatedSvc)
 
 	return &App{
-		Handlers:      handlers,
-		Registry:      registry,
-		Markets:       mkts,
-		Lendora:       lendoraMkts,
-		Tenants:       dynamicTenants,
-		Sessions:      sessionBearers,
-		Indexer:   idx,
-		GrpcConn:  grpcConn,
-		Delegated: delegatedSvc,
-		Logger:    logger,
+		Handlers:    handlers,
+		Registry:    registry,
+		Markets:     mkts,
+		Lendora:     lendoraMkts,
+		Tenants:     dynamicTenants,
+		Sessions:    sessionBearers,
+		Indexer:     idx,
+		GrpcConn:    grpcConn,
+		Delegated:   delegatedSvc,
+		ReadTenants: readTenants,
+		Logger:      logger,
 	}, nil
 }
